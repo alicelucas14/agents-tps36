@@ -1,0 +1,219 @@
+#!/usr/bin/env node
+/*
+ * Blog importer: WordPress -> static pages under /blogs/.
+ *
+ *   node tools/blog.mjs import --api https://your-wordpress-site.com
+ *   node tools/blog.mjs import --file wordpress-export.xml
+ *   node tools/blog.mjs build                      (rebuild pages from blogs/posts.json)
+ *
+ * Options:
+ *   --download-images   copy every post image into blogs/media so the site no longer needs WordPress
+ *   --out <folder>      write somewhere other than the site folder
+ *
+ * Needs Node 18 or newer. Blog settings (title, posts per page, byline) and the site address
+ * come from content.js; the header and footer come from index.html.
+ */
+import { createHash } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import * as core from './blog-core.mjs';
+
+const siteRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function parseArgs(argv) {
+  const args = { _: [] };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) args[key] = true;
+      else { args[key] = next; i += 1; }
+    } else args._.push(arg);
+  }
+  return args;
+}
+
+async function readSiteSettings() {
+  const source = await fs.readFile(path.join(siteRoot, 'content.js'), 'utf8');
+  const sandbox = { window: {} };
+  vm.runInNewContext(source, sandbox);
+  const content = sandbox.window.SITE_DEFAULTS;
+  return {
+    settings: content.blog || { title: 'Blogs', perPage: 9, author: '' },
+    siteUrl: content.seo?.siteUrl || '',
+  };
+}
+
+async function exists(file) {
+  try { await fs.access(file); return true; } catch { return false; }
+}
+
+/* ---------- images ---------- */
+
+function localImagePath(url) {
+  const marker = '/wp-content/uploads/';
+  const at = url.indexOf(marker);
+  if (at >= 0) return path.posix.join(core.POSTS_DIR, 'media', decodeURIComponent(url.slice(at + marker.length).split(/[?#]/)[0]));
+  const hash = createHash('sha1').update(url).digest('hex').slice(0, 10);
+  const name = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'image');
+  return path.posix.join(core.POSTS_DIR, 'media', 'external', `${hash}-${name}`);
+}
+
+async function downloadImages(posts, outDir) {
+  // 1. collect every remote image
+  const wanted = new Map();
+  const collect = (tag) => {
+    const src = tag.match(/\ssrc="([^"]+)"/);
+    const url = src && core.decodeEntities(src[1]);
+    if (url && /^https?:/i.test(url)) wanted.set(url, localImagePath(url));
+  };
+  for (const post of posts) {
+    for (const tag of post.html.match(/<img\b[^>]*>/gi) || []) collect(tag);
+    if (post.image && /^https?:/i.test(post.image.src)) wanted.set(post.image.src, localImagePath(post.image.src));
+  }
+
+  // 2. download them, several at a time
+  const queue = [...wanted];
+  const saved = new Set();
+  let done = 0;
+  const worker = async () => {
+    while (queue.length) {
+      const [url, local] = queue.shift();
+      const target = path.join(outDir, local);
+      let ok = await exists(target);
+      for (let attempt = 0; attempt < 3 && !ok; attempt += 1) {
+        try {
+          const response = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          if (!response.ok) throw new Error(String(response.status));
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, Buffer.from(await response.arrayBuffer()));
+          ok = true;
+        } catch { /* try again */ }
+      }
+      if (ok) saved.add(url);
+      else console.warn(`\n  could not download ${url}`);
+      done += 1;
+      if (done % 50 === 0 || done === wanted.size) process.stdout.write(`\r  images: ${done}/${wanted.size}`);
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, worker));
+  if (wanted.size) process.stdout.write('\n');
+
+  // 3. point posts at the local copies, but only for images that arrived
+  for (const post of posts) {
+    post.html = post.html.replace(/<img\b[^>]*>/gi, (tag) => {
+      const src = tag.match(/\ssrc="([^"]+)"/);
+      const url = src && core.decodeEntities(src[1]);
+      if (!url || !saved.has(url)) return tag;
+      return tag.replace(/\ssrc="[^"]+"/, ` src="/${wanted.get(url)}"`).replace(/\s(?:srcset|sizes)="[^"]*"/g, '');
+    });
+    if (post.image && saved.has(post.image.src)) post.image.src = `/${wanted.get(post.image.src)}`;
+  }
+  return { total: wanted.size, failed: wanted.size - saved.size };
+}
+
+/* ---------- writing ---------- */
+
+async function writeFiles(outDir, files) {
+  const manifestPath = path.join(outDir, core.POSTS_DIR, '.manifest.json');
+  let previous = [];
+  try { previous = JSON.parse(await fs.readFile(manifestPath, 'utf8')); } catch { /* first run */ }
+
+  const current = new Set(files.map((file) => file.path));
+  let removed = 0;
+  for (const old of previous) {
+    if (current.has(old)) continue;
+    await fs.rm(path.join(outDir, old), { force: true });
+    removed += 1;
+    // tidy up folders that are now empty
+    let dir = path.dirname(old);
+    while (dir.length > core.POSTS_DIR.length) {
+      try { await fs.rmdir(path.join(outDir, dir)); } catch { break; }
+      dir = path.dirname(dir);
+    }
+  }
+
+  for (const file of files) {
+    const target = path.join(outDir, file.path);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, file.content);
+  }
+  await fs.writeFile(manifestPath, JSON.stringify([...current].sort(), null, 1));
+  return { written: files.length, removed };
+}
+
+/* ---------- commands ---------- */
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const command = args._[0];
+  const outDir = args.out ? path.resolve(args.out) : siteRoot;
+
+  if (!['import', 'build'].includes(command)) {
+    console.log(`Usage:
+  node tools/blog.mjs import --api https://your-wordpress-site.com
+  node tools/blog.mjs import --file wordpress-export.xml
+  node tools/blog.mjs build
+
+Options: --download-images   --out <folder>`);
+    process.exit(command ? 1 : 0);
+  }
+
+  const { settings, siteUrl } = await readSiteSettings();
+  const chrome = core.extractChrome(await fs.readFile(path.join(siteRoot, 'index.html'), 'utf8'));
+  let posts;
+  let meta;
+
+  if (command === 'import') {
+    let imported;
+    if (args.api && args.api !== true) {
+      console.log(`Reading posts from ${args.api} ...`);
+      imported = await core.fetchWpPosts(args.api, { onProgress: ({ loaded, total }) => process.stdout.write(`\r  ${loaded}/${total} posts`) });
+      process.stdout.write('\n');
+      meta = { source: args.api };
+    } else if (args.file && args.file !== true) {
+      console.log(`Reading ${args.file} ...`);
+      imported = core.parseWxr(await fs.readFile(args.file, 'utf8'));
+      meta = { source: path.basename(args.file) };
+    } else {
+      console.error('Give a source: --api <wordpress address> or --file <export.xml>');
+      process.exit(1);
+    }
+    posts = core.preparePosts(imported.posts, { origin: imported.origin });
+    meta.origin = imported.origin;
+    meta.importedAt = new Date().toISOString();
+    console.log(`Cleaned ${posts.length} posts.`);
+    if (args['download-images']) {
+      console.log('Downloading images ...');
+      const result = await downloadImages(posts, outDir);
+      console.log(`  ${result.total - result.failed} images saved${result.failed ? `, ${result.failed} failed (those stay linked to the WordPress site)` : ''}.`);
+    }
+  } else {
+    const existing = path.join(outDir, core.POSTS_DIR, 'posts.json');
+    if (!(await exists(existing))) {
+      console.error(`No ${path.join(core.POSTS_DIR, 'posts.json')} yet. Run "import" first.`);
+      process.exit(1);
+    }
+    const saved = JSON.parse(await fs.readFile(existing, 'utf8'));
+    posts = saved.posts;
+    meta = { source: saved.source, origin: saved.origin, importedAt: saved.importedAt };
+    console.log(`Rebuilding ${posts.length} posts from ${core.POSTS_DIR}/posts.json ...`);
+  }
+
+  if (!posts.length) {
+    console.error('No published posts found, so nothing was written.');
+    process.exit(1);
+  }
+  const files = core.buildBlogFiles(posts, { settings, siteUrl, chrome, meta });
+  const result = await writeFiles(outDir, files);
+  console.log(`Done. ${result.written} files written to ${path.join(outDir, core.POSTS_DIR)}${result.removed ? `, ${result.removed} old files removed` : ''}.`);
+  console.log(`Open /${core.POSTS_DIR}/ on your site to see them.`);
+}
+
+main().catch((error) => {
+  console.error(`\nFailed: ${error.message}`);
+  process.exit(1);
+});

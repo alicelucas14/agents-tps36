@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Admin – Teen Patti Stars</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="admin.css" />
+  </head>
+  <body>
+    <main class="lock" id="lock" hidden>
+      <form class="lock-card" id="lock-form" novalidate>
+        <p class="eyebrow">Teen Patti Stars</p>
+        <h1 id="lock-title">Admin sign in</h1>
+        <p class="lock-intro" id="lock-intro"></p>
+
+        <div class="field">
+          <label for="lock-pass" id="lock-pass-label">Passcode</label>
+          <input id="lock-pass" type="password" autocomplete="current-password" required />
+        </div>
+        <div class="field" id="lock-confirm-row" hidden>
+          <label for="lock-confirm">Confirm passcode</label>
+          <input id="lock-confirm" type="password" autocomplete="new-password" />
+        </div>
+
+        <p class="field-msg" id="lock-error" role="alert"></p>
+        <button class="btn btn-primary" type="submit" id="lock-submit">Continue</button>
+
+        <p class="lock-note">
+          This passcode only keeps casual visitors out of the editor. It is checked in the browser, so it
+          is not a substitute for server-side access control.
+        </p>
+      </form>
+    </main>
+
+    <div class="app" id="app" data-preview="on" hidden>
+      <header class="topbar">
+        <div class="topbar-title">
+          <strong>Site admin</strong>
+          <span class="status" id="status" data-state="synced">No unpublished changes</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn" type="button" id="toggle-preview" aria-pressed="true">Preview</button>
+          <a class="btn" href="index.html" target="_blank" rel="noopener">View site</a>
+          <button class="btn btn-primary" type="button" id="export-btn">Download content.js</button>
+          <button class="btn" type="button" id="lock-btn">Lock</button>
+        </div>
+      </header>
+
+      <p class="banner" id="file-banner" hidden>
+        This page was opened as a local file, so the live preview may not update. Serve the folder with a
+        local web server (for example <code>python -m http.server</code>) for the full experience.
+      </p>
+
+      <div class="layout">
+        <nav class="sidenav" id="sidenav" aria-label="Sections"></nav>
+
+        <section class="editor" id="editor" tabindex="-1"></section>
+
+        <aside class="preview" id="preview" aria-label="Live preview">
+          <div class="preview-bar">
+            <div class="segmented" role="group" aria-label="Preview size">
+              <button type="button" data-mode="desktop" aria-pressed="true">Desktop</button>
+              <button type="button" data-mode="mobile" aria-pressed="false">Mobile</button>
+            </div>
+            <button class="btn preview-close" type="button" id="close-preview">Close</button>
+          </div>
+          <div class="preview-stage" id="preview-stage">
+            <div class="preview-holder" id="preview-holder">
+              <iframe id="preview-frame" title="Live preview of the site"></iframe>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+
+    <script src="content.js"></script>
+    <script src="content-lib.js"></script>
+    <script src="admin.js"></script>
+  </body>
+</html>
