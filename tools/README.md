@@ -35,6 +35,29 @@ blogs/posts.json              the cleaned posts, so pages can be rebuilt later
 Re-importing replaces the generated pages and removes pages for posts that no longer exist.
 Downloaded images in `blogs/media` are kept.
 
+## Pages
+
+Some WordPress **pages** (not posts) can be kept at their old addresses, for example `/big-agent-india/`:
+
+```
+node tools/blog.mjs pages --api https://your-wordpress-site.com --slugs big-agent-india,teen-patti-bihar
+```
+
+`--slugs` is the list of page names, the last part of each page's address. Each page is read from
+the WordPress REST API, cleaned the same way as a post, and written as `<page-name>/index.html`
+with the site's header, footer and social sidebar, plus the page's own search description.
+Links between these pages and to blog posts are pointed at the new addresses. You also get:
+
+```
+pages.json          the cleaned pages, so they can be rebuilt without WordPress
+sitemap-pages.xml   the home page and these pages, for Google Search Console
+```
+
+`build` rebuilds the pages together with the blog, so they always carry the current header and
+footer. Run `pages` again to refresh the text from WordPress; it removes pages you left out.
+Pictures keep loading from `/wp-content/uploads/...` on this domain, so copy those files to the
+server (they are not in the repository).
+
 ## Settings
 
 In the admin: **Blog** (title, author name, posts per page) and **General → Site address**

@@ -5,13 +5,16 @@
  *   node tools/blog.mjs import --api https://your-wordpress-site.com
  *   node tools/blog.mjs import --file wordpress-export.xml
  *   node tools/blog.mjs build                      (rebuild pages from blogs/posts.json)
+ *   node tools/blog.mjs pages --api https://your-wordpress-site.com --slugs big-agent-india,teen-patti-bihar
+ *                                                  (WordPress pages kept at their old addresses: /big-agent-india/ ...)
  *
  * Options:
  *   --download-images   copy every post image into blogs/media so the site no longer needs WordPress
  *   --out <folder>      write somewhere other than the site folder
  *
  * Needs Node 18 or newer. Blog settings (title, posts per page, byline) and the site address
- * come from content.js; the header and footer come from index.html.
+ * come from content.js; the header and footer come from index.html. Imported pages are saved in
+ * pages.json and are rebuilt together with the blog, so they always carry the current header and footer.
  */
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -145,6 +148,54 @@ async function writeFiles(outDir, files) {
   return { written: files.length, removed };
 }
 
+/* ---------- plain pages ---------- */
+
+async function readSavedPages(outDir) {
+  try { return JSON.parse(await fs.readFile(path.join(outDir, 'pages.json'), 'utf8')); } catch { return null; }
+}
+
+async function readPostSlugs(outDir) {
+  try {
+    return JSON.parse(await fs.readFile(path.join(outDir, core.POSTS_DIR, 'posts.json'), 'utf8')).posts.map((post) => post.slug);
+  } catch {
+    return [];
+  }
+}
+
+async function writePageFiles(outDir, files, previousSlugs = []) {
+  const current = new Set(files.filter((file) => file.path.endsWith('/index.html')).map((file) => file.path.split('/')[0]));
+  let removed = 0;
+  for (const slug of previousSlugs) {
+    if (current.has(slug)) continue;
+    await fs.rm(path.join(outDir, slug, 'index.html'), { force: true });
+    try { await fs.rmdir(path.join(outDir, slug)); } catch { /* the folder still holds something else */ }
+    removed += 1;
+  }
+  for (const file of files) {
+    const target = path.join(outDir, file.path);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, file.content);
+  }
+  return { written: files.length, removed };
+}
+
+async function importPages(args, outDir, { siteUrl, chrome }) {
+  if (!args.api || args.api === true) throw new Error('Give the WordPress address: --api https://your-wordpress-site.com');
+  if (!args.slugs || args.slugs === true) throw new Error('Give the page names: --slugs big-agent-india,teen-patti-bihar');
+  const slugs = String(args.slugs).split(',').map((slug) => slug.trim()).filter(Boolean);
+
+  console.log(`Reading ${slugs.length} pages from ${args.api} ...`);
+  const imported = await core.fetchWpPages(args.api, slugs, { onProgress: ({ loaded, total }) => process.stdout.write(`\r  ${loaded}/${total} pages`) });
+  process.stdout.write('\n');
+  const pages = core.preparePages(imported.pages, { origin: imported.origin, postSlugs: await readPostSlugs(outDir) });
+  const meta = { source: args.api, origin: imported.origin, importedAt: new Date().toISOString() };
+
+  const previous = (await readSavedPages(outDir))?.pages?.map((page) => page.slug) || [];
+  const result = await writePageFiles(outDir, core.buildSitePages(pages, { siteUrl, chrome, meta }), previous);
+  console.log(`Done. ${pages.length} pages written (${result.written} files)${result.removed ? `, ${result.removed} old pages removed` : ''}:`);
+  for (const page of pages) console.log(`  /${page.slug}/`);
+}
+
 /* ---------- commands ---------- */
 
 async function main() {
@@ -152,11 +203,12 @@ async function main() {
   const command = args._[0];
   const outDir = args.out ? path.resolve(args.out) : siteRoot;
 
-  if (!['import', 'build'].includes(command)) {
+  if (!['import', 'build', 'pages'].includes(command)) {
     console.log(`Usage:
   node tools/blog.mjs import --api https://your-wordpress-site.com
   node tools/blog.mjs import --file wordpress-export.xml
   node tools/blog.mjs build
+  node tools/blog.mjs pages --api https://your-wordpress-site.com --slugs big-agent-india,teen-patti-bihar
 
 Options: --download-images   --out <folder>`);
     process.exit(command ? 1 : 0);
@@ -164,6 +216,10 @@ Options: --download-images   --out <folder>`);
 
   const { settings, siteUrl } = await readSiteSettings();
   const chrome = core.extractChrome(await fs.readFile(path.join(siteRoot, 'index.html'), 'utf8'));
+  if (command === 'pages') {
+    await importPages(args, outDir, { siteUrl, chrome });
+    return;
+  }
   let posts;
   let meta;
 
@@ -211,6 +267,14 @@ Options: --download-images   --out <folder>`);
   const result = await writeFiles(outDir, files);
   console.log(`Done. ${result.written} files written to ${path.join(outDir, core.POSTS_DIR)}${result.removed ? `, ${result.removed} old files removed` : ''}.`);
   console.log(`Open /${core.POSTS_DIR}/ on your site to see them.`);
+
+  // Imported pages share the header and footer, so they are refreshed along with the blog.
+  const savedPages = await readSavedPages(outDir);
+  if (savedPages?.pages?.length) {
+    const meta = { source: savedPages.source, origin: savedPages.origin, importedAt: savedPages.importedAt };
+    await writePageFiles(outDir, core.buildSitePages(savedPages.pages, { siteUrl, chrome, meta }));
+    console.log(`Rebuilt ${savedPages.pages.length} pages: ${savedPages.pages.map((page) => `/${page.slug}/`).join(' ')}`);
+  }
 }
 
 main().catch((error) => {

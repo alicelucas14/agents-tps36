@@ -705,6 +705,161 @@ ${post.html}
   return files;
 }
 
+/* ---------- plain pages: WordPress "pages" kept at their old addresses (/big-agent-india/ ...) ---------- */
+
+// Top-level names this site already uses, so an imported page cannot take them over.
+const RESERVED_PAGE_SLUGS = new Set([POSTS_DIR, 'tools', 'wp-content', 'admin', 'index']);
+
+const metaContent = (head, attribute, value) => {
+  const tag = head.match(new RegExp(`<meta\\b[^>]*\\b${attribute}=["']${value}["'][^>]*>`, 'i'));
+  const content = tag && tag[0].match(/\bcontent=(?:"([^"]*)"|'([^']*)')/i);
+  return content ? decodeEntities(content[1] ?? content[2]).trim() : '';
+};
+
+/** Reads the named pages from a WordPress site's REST API, plus each page's own search description and share image. */
+export async function fetchWpPages(address, slugs, { fetchImpl = globalThis.fetch, onProgress } = {}) {
+  let base = address.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+  base = base.replace(/\/wp-json.*$/, '');
+
+  const pages = [];
+  for (const slug of slugs) {
+    const response = await fetchImpl(`${base}/wp-json/wp/v2/pages?slug=${encodeURIComponent(slug)}`, {
+      signal: AbortSignal.timeout?.(60000),
+    });
+    if (!response.ok) throw new Error(`The site answered with an error (${response.status}) for the page "${slug}".`);
+    const [page] = await response.json();
+    if (!page || (page.status && page.status !== 'publish')) throw new Error(`No published page called "${slug}" was found on ${base}.`);
+
+    // The description and share image written for search engines live in the page's HTML head.
+    let description = '';
+    let image = '';
+    try {
+      const html = await (await fetchImpl(page.link || `${base}/${slug}/`, { signal: AbortSignal.timeout?.(60000) })).text();
+      const end = html.search(/<\/head>/i);
+      const head = end < 0 ? html.slice(0, 60000) : html.slice(0, end);
+      description = metaContent(head, 'name', 'description') || metaContent(head, 'property', 'og:description');
+      image = metaContent(head, 'property', 'og:image');
+    } catch { /* the page still imports without them */ }
+
+    pages.push({
+      id: page.id,
+      slug: page.slug,
+      title: stripTags(page.title?.rendered || ''),
+      date: page.date,
+      modified: page.modified || page.date,
+      contentHtml: page.content?.rendered || '',
+      description,
+      image,
+    });
+    onProgress?.({ loaded: pages.length, total: slugs.length });
+  }
+  return { origin: new URL(base).origin, pages };
+}
+
+export function preparePages(rawPages, { origin = '', postSlugs = [] } = {}) {
+  const pageSlugs = new Set(rawPages.map((page) => page.slug));
+  const posts = new Set(postSlugs);
+  const originUrl = origin ? new URL(origin) : null;
+
+  // Links to the old site's other pages keep their address; links to its posts go to the blog pages.
+  const resolveLink = (href) => {
+    if (href.startsWith('#') || !originUrl) return href;
+    try {
+      const url = new URL(href, `${originUrl.origin}/`);
+      if (url.origin !== originUrl.origin) return href;
+      const parts = url.pathname.split('/').filter(Boolean);
+      const hash = url.hash.toLowerCase(); // headings get lower-case ids
+      if (!parts.length) return `/${hash}`;
+      if (parts.length === 1 && pageSlugs.has(parts[0])) return `/${parts[0]}/${hash}`;
+      if (parts.length === 1 && posts.has(parts[0])) return `/${POSTS_DIR}/${parts[0]}/${hash}`;
+      return url.href;
+    } catch {
+      return href;
+    }
+  };
+
+  return rawPages
+    .filter((raw) => raw.slug && raw.title)
+    .map((raw) => {
+      if (RESERVED_PAGE_SLUGS.has(raw.slug)) {
+        throw new Error(`The page "${raw.slug}" has a name this site already uses. Rename it in WordPress first.`);
+      }
+      let html = addStructure(sanitizeHtml(raw.contentHtml, { resolveLink }), { toc: true });
+      // Links that stay on this site open in the same tab; the first picture is at the top, so it loads at once.
+      html = html.replace(/<a\b[^>]*>/gi, (tag) => (/\shref="\/(?!\/)/.test(tag) ? tag.replace(/\s(?:target|rel)="[^"]*"/g, '') : tag));
+      html = html.replace(/<img\b[^>]*>/i, (tag) => tag.replace(/\sloading="lazy"/, ''));
+
+      const firstSrc = html.match(/<img\b[^>]*\ssrc="([^"]*)"/i)?.[1];
+      // A search description over this length is not one a person wrote (the old homepage carried one stuffed with junk).
+      const written = raw.description && raw.description.length <= 320 ? raw.description : '';
+      return {
+        id: raw.id,
+        slug: raw.slug,
+        title: raw.title,
+        date: raw.date,
+        modified: raw.modified || raw.date,
+        description: written || clip(stripTags(html.match(/<p>[\s\S]*?<\/p>/i)?.[0] || ''), 158),
+        image: raw.image && /^https?:/i.test(raw.image) ? raw.image : firstSrc ? decodeEntities(firstSrc) : '',
+        html,
+      };
+    });
+}
+
+export function buildSitePages(pages, { siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {} }) {
+  const site = siteUrl.replace(/\/+$/, '');
+  const abs = (path) => (site ? `${site}${path}` : '');
+  const files = [];
+
+  for (const page of pages) {
+    const url = abs(`/${page.slug}/`);
+    const body = `    <main class="blog-main">
+      <article class="post page-article">
+        <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">›</span><span aria-current="page">${escapeHtml(clip(page.title, 60))}</span></nav>
+        <h1 class="post-title">${escapeHtml(page.title)}</h1>
+        <div class="post-content">
+${page.html}
+        </div>
+      </article>
+    </main>`;
+    files.push({
+      path: `${page.slug}/index.html`,
+      content: pageShell({
+        title: `${page.title} | ${siteName}`,
+        description: page.description,
+        canonical: url,
+        image: /^https?:/i.test(page.image) ? page.image : page.image && site ? `${site}${page.image}` : '',
+        jsonLd: {
+          '@context': 'https://schema.org',
+          '@type': 'WebPage',
+          name: page.title,
+          description: page.description,
+          ...(url ? { url } : {}),
+          dateModified: page.modified || page.date,
+          isPartOf: { '@type': 'WebSite', name: siteName, ...(site ? { url: site } : {}) },
+        },
+        chrome, body,
+      }),
+    });
+  }
+
+  // Data for rebuilding later without fetching again
+  files.push({
+    path: 'pages.json',
+    content: JSON.stringify({ importedAt: meta.importedAt || new Date().toISOString(), source: meta.source || '', origin: meta.origin || '', pages }),
+  });
+  if (site) {
+    const urls = [{ loc: `${site}/` }, ...pages.map((page) => ({ loc: abs(`/${page.slug}/`), lastmod: (page.modified || page.date).slice(0, 10) }))];
+    files.push({
+      path: 'sitemap-pages.xml',
+      content: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+        .map((entry) => `  <url><loc>${escapeHtml(entry.loc)}</loc>${entry.lastmod ? `<lastmod>${escapeHtml(entry.lastmod)}</lastmod>` : ''}</url>`)
+        .join('\n')}\n</urlset>\n`,
+    });
+  }
+  return files;
+}
+
 /* ---------- zip (no compression), so the admin page can hand back a folder ---------- */
 
 const CRC_TABLE = (() => {

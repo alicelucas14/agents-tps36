@@ -254,6 +254,13 @@
   padding-right: 10px;
 }
 
+/* A plain page (such as /big-agent-india/) has no sidebar, so its text sits in one centred column. */
+.page-article {
+  width: min(900px, 100%);
+  margin: 0 auto;
+  padding-right: 0;
+}
+
 .post-title {
   margin: 38px 0 0;
   color: #333;

@@ -19,7 +19,7 @@ window.SITE_DEFAULTS = {
     { "label": "About Agency", "url": "#agency-plan" },
     { "label": "Why Join", "url": "#agency-benefit" },
     { "label": "How To Join", "url": "#how-to-join" },
-    { "label": "Big Agent India", "url": "https://agents.teenpattistars.io/big-agent-india/" },
+    { "label": "Big Agent India", "url": "/big-agent-india/" },
     { "label": "Steps", "url": "#how-it-works" }
   ],
   "hero": {
@@ -127,11 +127,11 @@ window.SITE_DEFAULTS = {
     "linksTitle": "QUICK LINKS",
     "links": [
       { "label": "Blogs", "url": "/blogs/" },
-      { "label": "Big Agent India", "url": "https://agents.teenpattistars.io/big-agent-india/" },
-      { "label": "Teen Patti Rajasthan", "url": "https://agents.teenpattistars.io/teen-patti-rajasthan/" },
-      { "label": "Teen Patti Gujarat", "url": "https://agents.teenpattistars.io/teen-patti-gujarat/" },
-      { "label": "Teen Patti Bihar", "url": "https://agents.teenpattistars.io/teen-patti-bihar/" },
-      { "label": "Earning With Teen Patti", "url": "https://agents.teenpattistars.io/earning-with-teen-patti-stars-in-india/" }
+      { "label": "Big Agent India", "url": "/big-agent-india/" },
+      { "label": "Teen Patti Rajasthan", "url": "/teen-patti-rajasthan/" },
+      { "label": "Teen Patti Gujarat", "url": "/teen-patti-gujarat/" },
+      { "label": "Teen Patti Bihar", "url": "/teen-patti-bihar/" },
+      { "label": "Earning With Teen Patti", "url": "/earning-with-teen-patti-stars-in-india/" }
     ],
     "social": [
       { "label": "Facebook", "url": "https://www.facebook.com/teenpattistarsindia/", "icon": "facebook" },
