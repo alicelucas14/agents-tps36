@@ -29,7 +29,7 @@ window.SITE_DEFAULTS = {
       "after": "Commission"
     },
     "joinLabel": "JOIN NOW",
-    "joinUrl": "https://agents.teenpattistars.io/#join",
+    "joinUrl": "#how-to-join",
     "downloadLabel": "DOWNLOAD GAME",
     "mobileLabel": "START TO EARN",
     "slides": [

@@ -1098,11 +1098,18 @@
         const indexResponse = await fetch('index.html', { cache: 'no-store' });
         if (!indexResponse.ok) throw new Error('Could not read index.html to copy the site header and footer.');
         const chrome = core.extractChrome(await indexResponse.text());
+        // Addresses that an imported page now owns must not be redirected to the blog.
+        let skipRedirects = new Set();
+        try {
+          const pagesResponse = await fetch('pages.json', { cache: 'no-store' });
+          if (pagesResponse.ok) skipRedirects = new Set((await pagesResponse.json()).pages.map((page) => page.path ?? page.slug));
+        } catch { /* no imported pages */ }
         const files = core.buildBlogFiles(data.posts, {
           settings: state.blog,
           siteUrl: state.seo.siteUrl,
           chrome,
           meta: { source: data.source, origin: data.origin, importedAt: data.importedAt },
+          skipRedirects,
         });
         const url = URL.createObjectURL(core.makeZip(files));
         const link = el('a');

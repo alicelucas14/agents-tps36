@@ -29,6 +29,7 @@ blogs/<post-name>/index.html  one page per post
 blogs/search.json             powers the search box
 blogs/sitemap.xml             submit this to Google Search Console
 blogs/redirects.txt           old WordPress address -> new address (301), for your server
+blogs/redirects.nginx.conf    the same redirects as one include file for nginx (aaPanel)
 blogs/posts.json              the cleaned posts, so pages can be rebuilt later
 ```
 
@@ -37,16 +38,21 @@ Downloaded images in `blogs/media` are kept.
 
 ## Pages
 
-Some WordPress **pages** (not posts) can be kept at their old addresses, for example `/big-agent-india/`:
+WordPress **pages** (not posts) can be kept at their old addresses, for example `/big-agent-india/`
+or the nested `/teen-patti-games/trx-win-go/`:
 
 ```
+node tools/blog.mjs pages --api https://your-wordpress-site.com --all
 node tools/blog.mjs pages --api https://your-wordpress-site.com --slugs big-agent-india,teen-patti-bihar
 ```
 
-`--slugs` is the list of page names, the last part of each page's address. Each page is read from
+`--all` imports every published page (the home page and `/blogs/` are skipped, because this site has
+its own). `--slugs` takes just the named pages. Each page is read from
 the WordPress REST API, cleaned the same way as a post, and written as `<page-name>/index.html`
 with the site's header, footer and social sidebar, plus the page's own search description.
-Links between these pages and to blog posts are pointed at the new addresses. You also get:
+Links between these pages and to blog posts are pointed at the new addresses, and a nested page's
+breadcrumb links to its parent page. Importing pages also refreshes the blog's redirect files, which leave
+out any address that a page now owns (WordPress allowed a page and a post to share one). You also get:
 
 ```
 pages.json          the cleaned pages, so they can be rebuilt without WordPress
