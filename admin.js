@@ -540,6 +540,12 @@
       ],
     },
     {
+      id: 'pages',
+      label: 'Pages',
+      intro: 'Every page of your site that is not a blog post. Open one to edit it, or add a new page. Changes are kept in this browser until you download the files and put them on your site.',
+      custom: 'pages',
+    },
+    {
       id: 'publish',
       label: 'Publish & backup',
       intro: 'Take your changes live, keep a backup, or change the passcode.',
@@ -1131,6 +1137,581 @@
     return nodes;
   }
 
+  /* ---------- Pages ---------- */
+
+  // The pages are plain files on the site, built from pages.json. Edits are kept in this browser as a draft;
+  // "Download pages" rebuilds the page files exactly as tools/blog.mjs would, so they can be put on the site.
+
+  const PAGES_DRAFT_KEY = 'tps_pages_draft_v1';
+  let pagesBase = null; // pages.json as it is on the server
+  let pagesChrome = null; // the site header, footer and sidebar, for previews and downloads
+  let pagesPostSlugs = []; // old blog post addresses, so a new page cannot take one
+  let pagesPermalinks = []; // home page sections that have a clean address of their own
+  let pagesError = '';
+  let pagesLoading = false;
+  let pagesDraft = { edited: {}, added: {}, removed: [] };
+  const pagesView = { mode: 'list', path: '', query: '' };
+
+  const pagePathOf = (page) => page.path ?? page.slug;
+
+  function readPagesDraft() {
+    try {
+      const raw = JSON.parse(local.get(PAGES_DRAFT_KEY) || 'null');
+      if (raw && typeof raw === 'object') {
+        return {
+          edited: raw.edited && typeof raw.edited === 'object' ? raw.edited : {},
+          added: raw.added && typeof raw.added === 'object' ? raw.added : {},
+          removed: Array.isArray(raw.removed) ? raw.removed.filter((path) => typeof path === 'string') : [],
+        };
+      }
+    } catch { /* a damaged draft is ignored */ }
+    return { edited: {}, added: {}, removed: [] };
+  }
+
+  const pagesChangeCount = () => Object.keys(pagesDraft.edited).length + Object.keys(pagesDraft.added).length + pagesDraft.removed.length;
+
+  function savePagesDraft() {
+    if (pagesChangeCount()) local.set(PAGES_DRAFT_KEY, JSON.stringify(pagesDraft));
+    else local.remove(PAGES_DRAFT_KEY);
+    renderNav();
+  }
+
+  // The pages as the site would have them with the draft applied.
+  function currentPages() {
+    const removed = new Set(pagesDraft.removed);
+    const kept = (pagesBase ? pagesBase.pages : [])
+      .filter((page) => !removed.has(pagePathOf(page)))
+      .map((page) => pagesDraft.edited[pagePathOf(page)] || page);
+    return [...kept, ...Object.values(pagesDraft.added)].sort((a, b) => pagePathOf(a).localeCompare(pagePathOf(b)));
+  }
+
+  const pageStatus = (path) => (pagesDraft.added[path] ? 'New' : pagesDraft.edited[path] ? 'Edited' : '');
+
+  // After the files have been published, the draft is no longer needed: drop whatever the server already has.
+  function reconcilePagesDraft() {
+    const live = new Map(pagesBase.pages.map((page) => [pagePathOf(page), page]));
+    let changed = false;
+    Object.entries(pagesDraft.edited).forEach(([path, page]) => {
+      const published = live.get(path);
+      if (!published || (published.html === page.html && published.title === page.title && published.description === page.description && published.image === page.image)) {
+        delete pagesDraft.edited[path];
+        changed = true;
+      }
+    });
+    Object.entries(pagesDraft.added).forEach(([path, page]) => {
+      const published = live.get(path);
+      if (published && published.html === page.html && published.title === page.title) {
+        delete pagesDraft.added[path];
+        changed = true;
+      }
+    });
+    const stillThere = pagesDraft.removed.filter((path) => live.has(path));
+    if (stillThere.length !== pagesDraft.removed.length) {
+      pagesDraft.removed = stillThere;
+      changed = true;
+    }
+    if (changed) savePagesDraft();
+  }
+
+  async function loadPages() {
+    if (pagesBase || pagesLoading) return;
+    pagesLoading = true;
+    pagesError = '';
+    try {
+      const [pagesResponse, indexResponse, postsResponse, core] = await Promise.all([
+        fetch('pages.json', { cache: 'no-store' }),
+        fetch('index.html', { cache: 'no-store' }),
+        fetch('blogs/posts.json', { cache: 'no-store' }).catch(() => null),
+        loadBlogCore(),
+      ]);
+      if (!pagesResponse.ok) throw new Error('Could not read pages.json. Import your pages first (see tools/README.md).');
+      if (!indexResponse.ok) throw new Error('Could not read index.html to copy the site header and footer.');
+      const loaded = await pagesResponse.json();
+      const indexHtml = await indexResponse.text();
+      pagesChrome = core.extractChrome(indexHtml);
+      pagesPermalinks = core.permalinkIds(indexHtml);
+      if (postsResponse && postsResponse.ok) {
+        pagesPostSlugs = (await postsResponse.json()).posts.map((post) => post.originalSlug || post.slug).filter(Boolean);
+      }
+      pagesBase = loaded;
+      pagesDraft = readPagesDraft();
+      reconcilePagesDraft();
+    } catch (error) {
+      pagesBase = null;
+      pagesError = error.message || 'Could not load the pages.';
+    } finally {
+      pagesLoading = false;
+      if (activeSection === 'pages') renderEditor();
+    }
+  }
+
+  function buildPages() {
+    if (!pagesBase) {
+      const card = el('section', 'card');
+      if (pagesError) {
+        card.append(el('h3', '', 'The pages could not be loaded'), el('p', 'card-note', pagesError));
+        const retry = el('button', 'btn', 'Try again');
+        retry.type = 'button';
+        retry.addEventListener('click', () => {
+          pagesError = '';
+          renderEditor();
+        });
+        card.append(retry);
+      } else {
+        card.append(el('p', 'blog-line', 'Loading your pages…'));
+        loadPages();
+      }
+      return [card];
+    }
+    return pagesView.mode === 'edit' ? buildPageEditor() : buildPageList();
+  }
+
+  async function downloadPages() {
+    try {
+      const core = await loadBlogCore();
+      const files = core.buildSitePages(currentPages(), {
+        siteUrl: state.seo.siteUrl,
+        chrome: pagesChrome,
+        meta: { source: pagesBase.source, origin: pagesBase.origin, importedAt: pagesBase.importedAt },
+      });
+      if (pagesDraft.removed.length) {
+        files.push({
+          path: 'REMOVED-PAGES.txt',
+          content: `Delete these files from your site folder and from the server (a zip cannot delete files):\n${pagesDraft.removed.map((path) => `  ${path}/index.html`).join('\n')}\n`,
+        });
+      }
+      const url = URL.createObjectURL(core.makeZip(files));
+      const link = el('a');
+      link.href = url;
+      link.download = 'pages-files.zip';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+      notify(`Downloaded ${files.length} files. Unzip them into your site folder, replacing the existing ones.${pagesDraft.removed.length ? ' Also delete the removed pages listed in REMOVED-PAGES.txt.' : ''}`);
+    } catch (error) {
+      notify(error.message);
+    }
+  }
+
+  function buildPageList() {
+    const nodes = [];
+    const pages = currentPages();
+    const changes = pagesChangeCount();
+
+    if (changes) {
+      const draftCard = el('section', 'card');
+      const parts = [];
+      const edited = Object.keys(pagesDraft.edited).length;
+      const added = Object.keys(pagesDraft.added).length;
+      if (edited) parts.push(`${edited} edited`);
+      if (added) parts.push(`${added} new`);
+      if (pagesDraft.removed.length) parts.push(`${pagesDraft.removed.length} removed`);
+      draftCard.append(el('h3', '', 'Unpublished page changes'));
+      draftCard.append(el('p', 'card-note', `${parts.join(', ')}, kept in this browser. Download the files, unzip them into your site folder, then push to GitHub and pull on the server.`));
+
+      const row = el('div', 'row');
+      const download = el('button', 'btn btn-primary', 'Download pages (.zip)');
+      download.type = 'button';
+      download.addEventListener('click', downloadPages);
+      const discard = el('button', 'btn btn-danger', 'Discard page changes');
+      discard.type = 'button';
+      discard.addEventListener('click', () => {
+        if (!window.confirm('Throw away every unpublished page change in this browser?')) return;
+        pagesDraft = { edited: {}, added: {}, removed: [] };
+        savePagesDraft();
+        renderEditor();
+      });
+      row.append(download, discard);
+      draftCard.append(row);
+
+      if (pagesDraft.removed.length) {
+        const note = el('div', 'card-note');
+        note.append('Removed pages (their files must also be deleted by hand, because a zip cannot delete files):');
+        const list = el('ul', 'removed-list');
+        pagesDraft.removed.forEach((path) => {
+          const item = el('li');
+          const undo = el('button', 'btn btn-small', 'Undo');
+          undo.type = 'button';
+          undo.addEventListener('click', () => {
+            pagesDraft.removed = pagesDraft.removed.filter((entry) => entry !== path);
+            savePagesDraft();
+            renderEditor();
+          });
+          item.append(el('code', '', `/${path}/`), ' ', undo);
+          list.append(item);
+        });
+        note.append(list);
+        draftCard.append(note);
+      }
+      nodes.push(draftCard);
+    }
+
+    const card = el('section', 'card');
+    const head = el('div', 'pages-head');
+    head.append(el('h3', '', `Your pages (${pages.length})`));
+    const add = el('button', 'btn btn-primary', '+ Add page');
+    add.type = 'button';
+    add.addEventListener('click', () => {
+      pagesView.mode = 'edit';
+      pagesView.path = '';
+      renderEditor();
+    });
+    head.append(add);
+
+    const search = el('input', 'pages-search');
+    search.type = 'search';
+    search.placeholder = 'Search by title or address';
+    search.setAttribute('aria-label', 'Search pages');
+    search.value = pagesView.query;
+
+    const list = el('div', 'pages-list');
+    const count = el('p', 'blog-line');
+    const paint = () => {
+      const words = pagesView.query.toLowerCase().split(/\s+/).filter(Boolean);
+      const shown = pages.filter((page) => {
+        const haystack = `${page.title} ${pagePathOf(page)}`.toLowerCase();
+        return words.every((word) => haystack.includes(word));
+      });
+      count.textContent = words.length ? `${shown.length} of ${pages.length} pages match.` : '';
+      count.hidden = !words.length;
+      if (!shown.length) {
+        list.replaceChildren(el('p', 'empty', 'No page matches that search.'));
+        return;
+      }
+      list.replaceChildren(...shown.map((page) => {
+        const path = pagePathOf(page);
+        const status = pageStatus(path);
+        const row = el('div', 'page-row');
+        const info = el('div', 'page-info');
+        const title = el('strong', '', page.title);
+        if (status) title.append(' ', el('span', `badge badge-${status.toLowerCase()}`, status));
+        info.append(title, el('code', '', `/${path}/`));
+        const actions = el('div', 'page-actions');
+        const edit = el('button', 'btn', 'Edit');
+        edit.type = 'button';
+        edit.setAttribute('aria-label', `Edit ${page.title}`);
+        edit.addEventListener('click', () => {
+          pagesView.mode = 'edit';
+          pagesView.path = path;
+          renderEditor();
+        });
+        actions.append(edit);
+        if (status === 'New') {
+          actions.append(el('span', 'page-note', 'Not published yet'));
+        } else {
+          const view = el('a', 'btn', 'View');
+          view.href = `/${path}/`;
+          view.target = '_blank';
+          view.rel = 'noopener';
+          view.setAttribute('aria-label', `View ${page.title} on the site`);
+          actions.append(view);
+        }
+        row.append(info, actions);
+        return row;
+      }));
+    };
+    search.addEventListener('input', () => {
+      pagesView.query = search.value;
+      paint();
+    });
+    paint();
+    card.append(head, search, count, list);
+    nodes.push(card);
+    return nodes;
+  }
+
+  function buildPageEditor() {
+    const core = blogCore;
+    const isNew = !pagesView.path;
+    const existing = isNew ? null : currentPages().find((page) => pagePathOf(page) === pagesView.path);
+    if (!isNew && !existing) {
+      pagesView.mode = 'list';
+      return buildPageList();
+    }
+    const page = existing || { title: '', path: '', description: '', image: '', html: '<p></p>' };
+    const livePath = isNew ? '' : pagePathOf(page);
+    const siteUrl = (state.seo.siteUrl || '').replace(/\/+$/, '');
+
+    const backToList = () => {
+      pagesView.mode = 'list';
+      renderEditor();
+    };
+    const back = el('button', 'btn btn-back', '← All pages');
+    back.type = 'button';
+    back.addEventListener('click', backToList);
+
+    const plainField = ({ label, value, type = 'text', hint, rows, readOnly }) => {
+      fieldCounter += 1;
+      const id = `field-${fieldCounter}`;
+      const wrap = el('div', 'field wide');
+      const labelEl = el('label', '', label);
+      labelEl.htmlFor = id;
+      const input = rows ? el('textarea') : el('input');
+      input.id = id;
+      if (rows) input.rows = rows;
+      else input.type = 'text';
+      if (type === 'url') input.inputMode = 'url';
+      input.value = value;
+      if (readOnly) input.readOnly = true;
+      const message = el('p', 'field-msg');
+      message.id = `${id}-msg`;
+      const describedBy = [message.id];
+      wrap.append(labelEl, input);
+      if (hint) {
+        const hintEl = el('p', 'field-hint', hint);
+        hintEl.id = `${id}-hint`;
+        describedBy.push(hintEl.id);
+        wrap.append(hintEl);
+      }
+      wrap.append(message);
+      input.setAttribute('aria-describedby', describedBy.join(' '));
+      const fail = (text) => {
+        message.textContent = text;
+        input.classList.toggle('invalid', Boolean(text));
+        input.setAttribute('aria-invalid', String(Boolean(text)));
+        return !text;
+      };
+      return { wrap, input, fail, hintEl: wrap.querySelector('.field-hint') };
+    };
+
+    const card = el('section', 'card');
+    card.append(el('h3', '', isNew ? 'New page' : 'Edit page'));
+    const fields = el('div', 'fields');
+    const title = plainField({ label: 'Title', value: page.title });
+    const address = plainField({
+      label: 'Address',
+      value: livePath,
+      readOnly: !isNew,
+      hint: isNew
+        ? 'Letters, numbers and hyphens, for example my-new-page. Use games/my-game to put it under an existing page.'
+        : 'The address of an existing page cannot be changed, because visitors and Google already use it.',
+    });
+    const addressPreview = () => {
+      if (!isNew) return;
+      const path = core.normalizePagePath(address.input.value);
+      address.hintEl.textContent = path ? `This page will be at ${siteUrl || ''}/${path}/` : 'Letters, numbers and hyphens, for example my-new-page. Use games/my-game to put it under an existing page.';
+    };
+    address.input.addEventListener('input', addressPreview);
+    const description = plainField({ label: 'Description for search engines', value: page.description || '', rows: 3, hint: 'Shown under the title in Google results. About 150 characters works best.' });
+    const count = el('p', 'field-hint');
+    const countDescription = () => {
+      const length = description.input.value.trim().length;
+      count.textContent = `${length} characters${length > 160 ? ' (Google may cut it short)' : ''}`;
+    };
+    description.input.addEventListener('input', countDescription);
+    countDescription();
+    description.wrap.insertBefore(count, description.wrap.querySelector('.field-msg'));
+    const image = plainField({ label: 'Share picture link (optional)', value: page.image || '', type: 'url', hint: 'The picture shown when the page is shared. Left empty, the first picture in the page is used.' });
+    fields.append(title.wrap, address.wrap, description.wrap, image.wrap);
+    card.append(fields);
+
+    // The text itself, with a small toolbar.
+    fieldCounter += 1;
+    const contentId = `field-${fieldCounter}`;
+    const contentWrap = el('div', 'field');
+    const contentLabel = el('label', '', 'Content');
+    contentLabel.htmlFor = contentId;
+    const toolbar = el('div', 'rich-toolbar');
+    toolbar.setAttribute('role', 'toolbar');
+    toolbar.setAttribute('aria-label', 'Text formatting');
+    const rich = el('div', 'rich');
+    rich.id = contentId;
+    rich.contentEditable = 'true';
+    rich.setAttribute('role', 'textbox');
+    rich.setAttribute('aria-multiline', 'true');
+    rich.innerHTML = core.pageSourceHtml(page.html);
+    // Pressing Enter should start a normal paragraph (<p>), as the site's pages use, not a <div>.
+    try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* an older browser keeps its own habit */ }
+    const source = el('textarea', 'rich-source');
+    source.setAttribute('aria-label', 'Page content as HTML');
+    source.spellcheck = false;
+    source.hidden = true;
+    let htmlMode = false;
+
+    const run = (command, value) => {
+      rich.focus();
+      document.execCommand(command, false, value);
+    };
+    const tool = (label, name, action, extra = '') => {
+      const button = el('button', `rich-btn ${extra}`.trim(), label);
+      button.type = 'button';
+      button.title = name;
+      button.setAttribute('aria-label', name);
+      button.addEventListener('mousedown', (event) => event.preventDefault()); // keep the text selected
+      button.addEventListener('click', () => {
+        if (!htmlMode) action();
+      });
+      toolbar.append(button);
+      return button;
+    };
+    tool('P', 'Normal text', () => run('formatBlock', '<p>'));
+    tool('H2', 'Heading', () => run('formatBlock', '<h2>'));
+    tool('H3', 'Smaller heading', () => run('formatBlock', '<h3>'));
+    tool('H4', 'Small heading', () => run('formatBlock', '<h4>'));
+    tool('B', 'Bold', () => run('bold'), 'rich-bold');
+    tool('I', 'Italic', () => run('italic'), 'rich-italic');
+    tool('•', 'Bulleted list', () => run('insertUnorderedList'));
+    tool('1.', 'Numbered list', () => run('insertOrderedList'));
+    tool('❝', 'Quote', () => run('formatBlock', '<blockquote>'));
+    tool('Link', 'Add a link', () => {
+      const address = window.prompt('Link address (https://… or a page on this site such as /big-agent-india/):', 'https://');
+      if (!address) return;
+      const url = safeUrl(address.trim());
+      if (!url) { notify('That link is not allowed. Use an https:// address or a page on this site.'); return; }
+      if (window.getSelection().toString()) {
+        run('createLink', url);
+      } else {
+        const text = window.prompt('Text to show for the link:', '');
+        if (text) run('insertHTML', `<a href="${core.escapeHtml(url)}">${core.escapeHtml(text)}</a>`);
+      }
+    });
+    tool('Unlink', 'Remove the link', () => run('unlink'));
+    tool('Picture', 'Add a picture', () => {
+      const link = window.prompt('Picture address (https://… or /wp-content/uploads/…):', 'https://');
+      if (!link) return;
+      const url = safeUrl(link.trim());
+      if (!url) { notify('That picture address is not allowed.'); return; }
+      const alt = window.prompt('Describe the picture for people who cannot see it:', '') || '';
+      run('insertHTML', `<img src="${core.escapeHtml(url)}" alt="${core.escapeHtml(alt)}">`);
+    });
+    tool('↶', 'Undo', () => run('undo'));
+    tool('↷', 'Redo', () => run('redo'));
+    const htmlButton = el('button', 'rich-btn rich-html', 'HTML');
+    htmlButton.type = 'button';
+    htmlButton.title = 'Edit the page as HTML';
+    htmlButton.setAttribute('aria-pressed', 'false');
+    htmlButton.addEventListener('click', () => {
+      htmlMode = !htmlMode;
+      htmlButton.setAttribute('aria-pressed', String(htmlMode));
+      toolbar.classList.toggle('is-html', htmlMode);
+      if (htmlMode) {
+        source.value = rich.innerHTML;
+      } else {
+        rich.innerHTML = core.sanitizeHtml(source.value);
+      }
+      rich.hidden = htmlMode;
+      source.hidden = !htmlMode;
+    });
+    toolbar.append(htmlButton);
+
+    // Pasted text keeps its headings, lists and links, but loses anything unsafe or messy.
+    rich.addEventListener('paste', (event) => {
+      event.preventDefault();
+      const html = event.clipboardData.getData('text/html');
+      const text = event.clipboardData.getData('text/plain');
+      document.execCommand('insertHTML', false, html ? core.sanitizeHtml(html) : core.escapeHtml(text).replace(/\n/g, '<br>'));
+    });
+
+    const contentMessage = el('p', 'field-msg');
+    contentWrap.append(contentLabel, toolbar, rich, source, contentMessage);
+    card.append(contentWrap);
+
+    const currentContent = () => (htmlMode ? source.value : rich.innerHTML);
+
+    // What the page would look like, built the same way as the real file.
+    const previewFrame = el('iframe', 'page-preview');
+    previewFrame.title = 'Preview of the page';
+    previewFrame.hidden = true;
+    const draftOf = () => {
+      const html = core.cleanPageHtml(currentContent());
+      const first = html.match(/<img\b[^>]*\ssrc="([^"]*)"/i);
+      const plain = core.stripTags(html.match(/<p>[\s\S]*?<\/p>/i)?.[0] || '');
+      const now = new Date().toISOString();
+      const path = isNew ? core.normalizePagePath(address.input.value) : livePath;
+      return {
+        ...page,
+        slug: (path || 'new-page').split('/').pop(),
+        path: path || 'new-page',
+        title: title.input.value.trim() || 'Untitled page',
+        description: description.input.value.trim() || plain.slice(0, 158),
+        image: image.input.value.trim() || (first ? core.decodeEntities(first[1]) : ''),
+        date: page.date || now,
+        modified: now,
+        html,
+      };
+    };
+    const previewButton = el('button', 'btn', 'Preview page');
+    previewButton.type = 'button';
+    previewButton.setAttribute('aria-pressed', 'false');
+    previewButton.addEventListener('click', () => {
+      const show = previewFrame.hidden;
+      previewButton.setAttribute('aria-pressed', String(show));
+      previewFrame.hidden = !show;
+      if (!show) return;
+      const draft = draftOf();
+      const built = core.buildSitePages([draft], { siteUrl: state.seo.siteUrl, chrome: pagesChrome }).find((file) => file.path === `${draft.path}/index.html`);
+      previewFrame.srcdoc = built.content.replace('<head>', '<head>\n    <base target="_blank" />');
+    });
+
+    const save = () => {
+      let ok = true;
+      const titleText = title.input.value.trim();
+      ok = title.fail(titleText ? '' : 'Give the page a title.') && ok;
+      const path = isNew ? core.normalizePagePath(address.input.value) : livePath;
+      if (isNew) {
+        ok = address.fail(core.pageAddressProblem(path, { pages: currentPages(), postSlugs: pagesPostSlugs, reservedRoots: pagesPermalinks })) && ok;
+      }
+      const descriptionText = description.input.value.trim();
+      ok = description.fail(descriptionText.length > 320 ? 'Keep the description under 320 characters.' : '') && ok;
+      const imageText = image.input.value.trim();
+      ok = image.fail(imageText && !safeUrl(imageText) ? 'Use a link that starts with https:// (or a path on this site).' : '') && ok;
+      const html = core.cleanPageHtml(currentContent());
+      const hasContent = core.stripTags(html) || /<img\b/i.test(html);
+      contentMessage.textContent = hasContent ? '' : 'The page has no content yet.';
+      ok = Boolean(hasContent) && ok;
+      if (!ok) {
+        const firstBad = card.querySelector('.invalid') || rich;
+        firstBad.focus();
+        return;
+      }
+
+      const draft = draftOf();
+      draft.path = path;
+      draft.slug = path.split('/').pop();
+      draft.title = titleText;
+      const onSite = pagesBase.pages.some((entry) => pagePathOf(entry) === path);
+      if (onSite) {
+        pagesDraft.edited[path] = draft;
+        delete pagesDraft.added[path];
+        pagesDraft.removed = pagesDraft.removed.filter((entry) => entry !== path);
+      } else {
+        pagesDraft.added[path] = draft;
+      }
+      savePagesDraft();
+      notify(`Saved “${titleText}” in this browser. Download the pages when you are ready to publish.`);
+      backToList();
+    };
+    const saveButton = el('button', 'btn btn-primary', isNew ? 'Add page' : 'Save page');
+    saveButton.type = 'button';
+    saveButton.addEventListener('click', save);
+
+    const actions = el('div', 'row');
+    actions.append(saveButton, previewButton);
+    const cancel = el('button', 'btn', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', backToList);
+    actions.append(cancel);
+    if (!isNew) {
+      const remove = el('button', 'btn btn-danger', 'Delete page');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        if (!window.confirm(`Delete “${page.title}”? Its address /${livePath}/ will stop working once you publish.`)) return;
+        if (pagesBase.pages.some((entry) => pagePathOf(entry) === livePath)) {
+          if (!pagesDraft.removed.includes(livePath)) pagesDraft.removed.push(livePath);
+          delete pagesDraft.edited[livePath];
+        } else {
+          delete pagesDraft.added[livePath];
+        }
+        savePagesDraft();
+        backToList();
+      });
+      actions.append(remove);
+    }
+    card.append(actions, previewFrame);
+    return [back, card];
+  }
+
   /* ---------- Editor shell ---------- */
 
   const editor = $('#editor');
@@ -1139,7 +1720,8 @@
   function renderNav() {
     sidenav.replaceChildren(
       ...SECTIONS.map((section) => {
-        const button = el('button', 'nav-item', section.label);
+        const waiting = section.id === 'pages' ? pagesChangeCount() : 0;
+        const button = el('button', 'nav-item', waiting ? `${section.label} (${waiting})` : section.label);
         button.type = 'button';
         if (section.id === activeSection) button.setAttribute('aria-current', 'page');
         button.addEventListener('click', () => {
@@ -1160,9 +1742,11 @@
     const head = el('header', 'editor-head');
     head.append(el('h2', '', section.label), el('p', '', section.intro));
 
-    const blocks = section.custom
-      ? buildPublish()
-      : section.blocks.map((block) => (block.list ? buildListBlock(block) : buildFieldsBlock(block)));
+    const blocks = section.custom === 'pages'
+      ? buildPages()
+      : section.custom
+        ? buildPublish()
+        : section.blocks.map((block) => (block.list ? buildListBlock(block) : buildFieldsBlock(block)));
     if (section.after === 'blog') blocks.push(...buildBlog());
     editor.replaceChildren(head, ...blocks);
 
@@ -1223,6 +1807,7 @@
   function showApp() {
     app.hidden = false;
     state = window.SiteContent.load();
+    pagesDraft = readPagesDraft();
     if (!isDirty()) local.remove(DRAFT_KEY);
     setStatus(isDirty(), true);
 

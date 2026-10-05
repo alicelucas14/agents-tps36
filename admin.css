@@ -667,3 +667,236 @@ textarea {
     font-size: 1.5rem;
   }
 }
+
+/* Pages: the list, the editor and its toolbar */
+
+.pages-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pages-search {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--input);
+  color: var(--text);
+}
+
+.pages-search:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.pages-list {
+  display: grid;
+}
+
+.page-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 2px;
+  border-top: 1px solid var(--line);
+}
+
+.page-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 260px;
+}
+
+.page-info strong {
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.page-info code {
+  color: var(--muted);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-actions .btn {
+  min-height: 34px;
+  padding: 0 14px;
+}
+
+.page-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.badge-new {
+  background: rgba(142, 230, 168, 0.18);
+  color: var(--ok);
+}
+
+.badge-edited {
+  background: rgba(255, 204, 63, 0.18);
+  color: var(--gold);
+}
+
+.btn-small {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 0.8rem;
+}
+
+.btn-back {
+  justify-self: start;
+  width: fit-content;
+  min-height: 34px;
+}
+
+.removed-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.removed-list li {
+  margin-bottom: 6px;
+}
+
+.rich-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 0 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.rich-btn {
+  min-width: 36px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rich-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.rich-bold {
+  font-weight: 900;
+}
+
+.rich-italic {
+  font-style: italic;
+}
+
+.rich-html {
+  margin-left: auto;
+}
+
+.rich-html[aria-pressed="true"] {
+  border-color: var(--gold);
+  color: var(--gold);
+}
+
+.rich-toolbar.is-html .rich-btn:not(.rich-html) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The writing area looks like the page itself: dark text on white. */
+.rich {
+  min-height: 320px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: #fff;
+  color: #222;
+  font-family: "Roboto", "Inter", sans-serif;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.rich:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 0;
+}
+
+.rich h2,
+.rich h3,
+.rich h4 {
+  margin: 1.2em 0 0.5em;
+  line-height: 1.25;
+  color: #1c1c1c;
+}
+
+.rich h2 { font-size: 1.6rem; }
+.rich h3 { font-size: 1.3rem; }
+.rich h4 { font-size: 1.1rem; }
+.rich p { margin: 0 0 1em; }
+.rich a { color: #0a7ea4; text-decoration: underline; }
+.rich img { max-width: 100%; height: auto; }
+.rich figure { margin: 1em 0; }
+.rich ul, .rich ol { margin: 0 0 1em; padding-left: 1.4em; }
+.rich blockquote { margin: 1em 0; padding: 4px 16px; border-left: 4px solid #591036; color: #444; }
+
+.rich-source {
+  width: 100%;
+  min-height: 320px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: var(--input);
+  color: var(--text);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.page-preview {
+  width: 100%;
+  height: 640px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+@media (max-width: 680px) {
+  .rich-html {
+    margin-left: 0;
+  }
+}

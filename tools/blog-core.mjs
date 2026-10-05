@@ -837,6 +837,47 @@ export async function fetchWpPages(address, slugs = null, { fetchImpl = globalTh
   return { origin: new URL(base).origin, pages };
 }
 
+/**
+ * The cleaning every page goes through, whether it came from WordPress or was written in the admin:
+ * unsafe or page-builder markup removed, headings numbered for a table of contents (four or more headings
+ * get one), links that stay on this site opening in the same tab, and the first picture loading at once.
+ */
+export function cleanPageHtml(contentHtml, { resolveLink } = {}) {
+  let html = addStructure(sanitizeHtml(contentHtml, resolveLink ? { resolveLink } : {}), { toc: true });
+  html = html.replace(/<a\b[^>]*>/gi, (tag) => (/\shref="\/(?!\/)/.test(tag) ? tag.replace(/\s(?:target|rel)="[^"]*"/g, '') : tag));
+  html = html.replace(/<img\b[^>]*>/i, (tag) => tag.replace(/\sloading="lazy"/, ''));
+  return html;
+}
+
+/** A page's content as it is edited: without the generated table of contents, which is rebuilt from the headings on save. */
+export function pageSourceHtml(html) {
+  return String(html).replace(/<details class="toc"[\s\S]*?<\/details>\s*/i, '');
+}
+
+/** Turns what someone typed into a safe page address: "My New Page" -> "my-new-page", "games/New Game" -> "games/new-game". */
+export function normalizePagePath(input) {
+  return String(input)
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9/-]/g, '')
+    .split('/')
+    .map((part) => part.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, ''))
+    .filter(Boolean)
+    .join('/');
+}
+
+/** Why an address cannot be used for a page, or '' when it can. `self` is the page's own address when editing it. */
+export function pageAddressProblem(path, { pages = [], postSlugs = [], reservedRoots = [], self = '' } = {}) {
+  if (!path) return 'Enter an address, for example my-new-page.';
+  if (path.split('/').length > 3) return 'Use at most three parts, for example games/new-game.';
+  const root = path.split('/')[0];
+  if (new Set([...RESERVED_PAGE_ROOTS, ...reservedRoots]).has(root)) return `"${root}" is already used by the site. Choose another name.`;
+  if (path !== self && pages.some((page) => (page.path ?? page.slug) === path)) return 'A page with this address already exists.';
+  if (!path.includes('/') && postSlugs.includes(path)) return 'An old blog post used this address, and it redirects to the blog. Choose another name.';
+  return '';
+}
+
 /** Cleans pages. Pages that cannot be kept (the home page, or a name this site already uses) are listed in `skipped`. */
 export function preparePages(rawPages, { origin = '', postSlugs = [], skipped = [], reservedRoots = [] } = {}) {
   const reserved = new Set([...RESERVED_PAGE_ROOTS, ...reservedRoots]);
@@ -872,10 +913,7 @@ export function preparePages(rawPages, { origin = '', postSlugs = [], skipped = 
   };
 
   return usable.map(({ raw, path }) => {
-    let html = addStructure(sanitizeHtml(raw.contentHtml, { resolveLink }), { toc: true });
-    // Links that stay on this site open in the same tab; the first picture is at the top, so it loads at once.
-    html = html.replace(/<a\b[^>]*>/gi, (tag) => (/\shref="\/(?!\/)/.test(tag) ? tag.replace(/\s(?:target|rel)="[^"]*"/g, '') : tag));
-    html = html.replace(/<img\b[^>]*>/i, (tag) => tag.replace(/\sloading="lazy"/, ''));
+    const html = cleanPageHtml(raw.contentHtml, { resolveLink });
 
     const firstSrc = html.match(/<img\b[^>]*\ssrc="([^"]*)"/i)?.[1];
     // A search description over this length is not one a person wrote (the old homepage carried one stuffed with junk).

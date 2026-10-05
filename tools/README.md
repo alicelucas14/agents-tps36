@@ -64,6 +64,17 @@ footer. Run `pages` again to refresh the text from WordPress; it removes pages y
 Pictures keep loading from `/wp-content/uploads/...` on this domain, so copy those files to the
 server (they are not in the repository).
 
+### Editing pages in the admin
+
+Once `pages.json` exists, the admin has a **Pages** section: a searchable list of every page, an editor
+(title, search description, share picture and the text, with a toolbar and an HTML view), a preview, and
+buttons to add and delete pages. Edits wait in the browser as a draft. **Download pages (.zip)** builds the
+page files with the same code as the command line, so pages you did not touch come out byte for byte the
+same. Unzip it into the site folder, push to GitHub and pull on the server. A zip cannot delete files, so
+for removed pages it also lists the files to delete (`REMOVED-PAGES.txt`). A new page cannot reuse an
+address the site already uses, a section address such as `/agency-plan/`, or an old blog post address.
+Link to a new page from the menu with the **Header menu** section (for example `/my-new-page/`).
+
 ## Clean addresses for sections of the home page
 
 A section of `index.html` marked with a `data-permalink` attribute gets an address of its own, for
