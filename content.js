@@ -16,11 +16,11 @@ window.SITE_DEFAULTS = {
     "downloadUrl": "https://bit.ly/4iwW8FR"
   },
   "menu": [
-    { "label": "About Agency", "url": "#agency-plan" },
-    { "label": "Why Join", "url": "#agency-benefit" },
-    { "label": "How To Join", "url": "#how-to-join" },
+    { "label": "About Agency", "url": "/agency-plan/" },
+    { "label": "Why Join", "url": "/agency-benefit/" },
+    { "label": "How To Join", "url": "/how-to-join/" },
     { "label": "Big Agent India", "url": "/big-agent-india/" },
-    { "label": "Steps", "url": "#how-it-works" }
+    { "label": "Steps", "url": "/how-it-works/" }
   ],
   "hero": {
     "headline": {
@@ -29,7 +29,7 @@ window.SITE_DEFAULTS = {
       "after": "Commission"
     },
     "joinLabel": "JOIN NOW",
-    "joinUrl": "#how-to-join",
+    "joinUrl": "/how-to-join/",
     "downloadLabel": "DOWNLOAD GAME",
     "mobileLabel": "START TO EARN",
     "slides": [

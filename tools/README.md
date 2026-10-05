@@ -64,6 +64,22 @@ footer. Run `pages` again to refresh the text from WordPress; it removes pages y
 Pictures keep loading from `/wp-content/uploads/...` on this domain, so copy those files to the
 server (they are not in the repository).
 
+## Clean addresses for sections of the home page
+
+A section of `index.html` marked with a `data-permalink` attribute gets an address of its own, for
+example `/agency-plan/` instead of `/#agency-plan`. Clicking its menu link still scrolls the home page
+smoothly and shows the clean address. The address also works when it is opened, shared or refreshed,
+because `build` writes `<section-id>/index.html`: a copy of the home page that scrolls to the section.
+The copies point to the home page as the main one for search engines, and browsers without JavaScript are
+sent to the `#anchor`. Run `build` after changing the structure of `index.html` (text edits made in the
+admin need nothing). To add a section, give it an `id` and a `data-permalink` attribute, link to `/<id>/`,
+and run `build`.
+
+## Sitemaps
+
+`sitemap_index.xml` lists `sitemap-pages.xml` and `blogs/sitemap.xml`. WordPress published its sitemaps at that
+same address, so Google keeps finding them.
+
 ## Settings
 
 In the admin: **Blog** (title, author name, posts per page) and **General → Site address**

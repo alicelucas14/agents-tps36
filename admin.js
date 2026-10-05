@@ -211,7 +211,7 @@
             blank: { label: '', url: '' },
             fields: [
               { key: 'label', label: 'Label', type: 'text' },
-              { key: 'url', label: 'Link', type: 'url', hint: 'Use #section to jump within this page, or a full https:// address.' },
+              { key: 'url', label: 'Link', type: 'url', hint: 'Use /agency-plan/, /agency-benefit/, /how-to-join/ or /how-it-works/ to scroll to that part of this page, a page address such as /big-agent-india/, or a full https:// address.' },
             ],
           },
         },
@@ -1097,12 +1097,13 @@
         }
         const indexResponse = await fetch('index.html', { cache: 'no-store' });
         if (!indexResponse.ok) throw new Error('Could not read index.html to copy the site header and footer.');
-        const chrome = core.extractChrome(await indexResponse.text());
+        const indexHtml = await indexResponse.text();
+        const chrome = core.extractChrome(indexHtml);
         // Addresses that an imported page now owns must not be redirected to the blog.
-        let skipRedirects = new Set();
+        let skipRedirects = new Set(core.permalinkIds(indexHtml));
         try {
           const pagesResponse = await fetch('pages.json', { cache: 'no-store' });
-          if (pagesResponse.ok) skipRedirects = new Set((await pagesResponse.json()).pages.map((page) => page.path ?? page.slug));
+          if (pagesResponse.ok) (await pagesResponse.json()).pages.forEach((page) => skipRedirects.add(page.path ?? page.slug));
         } catch { /* no imported pages */ }
         const files = core.buildBlogFiles(data.posts, {
           settings: state.blog,

@@ -186,7 +186,7 @@ async function writePageFiles(outDir, files, previousPaths = []) {
   return { written: files.length, removed };
 }
 
-async function importPages(args, outDir, { siteUrl, chrome }) {
+async function importPages(args, outDir, { siteUrl, chrome, permalinks = [] }) {
   if (!args.api || args.api === true) throw new Error('Give the WordPress address: --api https://your-wordpress-site.com');
   const everything = args.all === true;
   if (!everything && (!args.slugs || args.slugs === true)) throw new Error('Say which pages: --all, or --slugs big-agent-india,teen-patti-bihar');
@@ -196,7 +196,7 @@ async function importPages(args, outDir, { siteUrl, chrome }) {
   const imported = await core.fetchWpPages(args.api, slugs, { onProgress: ({ loaded, total }) => process.stdout.write(`\r  ${loaded}/${total} pages`) });
   process.stdout.write('\n');
   const skipped = [];
-  const pages = core.preparePages(imported.pages, { origin: imported.origin, postSlugs: await readPostSlugs(outDir), skipped });
+  const pages = core.preparePages(imported.pages, { origin: imported.origin, postSlugs: await readPostSlugs(outDir), skipped, reservedRoots: permalinks });
   const meta = { source: args.api, origin: imported.origin, importedAt: new Date().toISOString() };
 
   const previous = (await readSavedPages(outDir))?.pages?.map(pagePath) || [];
@@ -205,6 +205,40 @@ async function importPages(args, outDir, { siteUrl, chrome }) {
   for (const page of pages.slice(0, 8)) console.log(`  /${pagePath(page)}/`);
   if (pages.length > 8) console.log(`  ... and ${pages.length - 8} more`);
   for (const item of skipped) console.log(`  skipped ${item.path}: ${item.reason}`);
+}
+
+/* ---------- clean addresses for sections of the home page ---------- */
+
+// /agency-plan/ and the other marked sections are the home page again, so the address also works when it is
+// opened, shared or refreshed (the page itself then scrolls to the section). They point back at the home page for search engines.
+async function writeSectionPermalinks(outDir, { siteUrl }) {
+  const source = await fs.readFile(path.join(siteRoot, 'index.html'), 'utf8');
+  const ids = core.permalinkIds(source);
+  const site = siteUrl.replace(/\/+$/, '');
+  for (const id of ids) {
+    // the copy sits one folder deeper, so file references such as styles.css must start from the site root
+    let html = source.replace(/(\s(?:href|src)=")(?!https?:|\/|#|data:|mailto:|tel:)([^"]+")/g, '$1/$2');
+    // Without JavaScript nothing scrolls to the section, so those browsers are sent to the #anchor, which scrolls by itself.
+    const noScript = `    <noscript><meta http-equiv="refresh" content="0; url=/#${id}" /></noscript>\n`;
+    html = html.replace('</head>', `${site ? `    <link rel="canonical" href="${site}/" />\n` : ''}${noScript}  </head>`);
+    await fs.mkdir(path.join(outDir, id), { recursive: true });
+    await fs.writeFile(path.join(outDir, id, 'index.html'), html);
+  }
+  return ids;
+}
+
+// The old WordPress site published its sitemaps at /sitemap_index.xml, and Google has that address on file.
+// Keeping it alive, now listing the new sitemaps, means nothing has to be resubmitted.
+async function writeSitemapIndex(outDir, { siteUrl }) {
+  const site = siteUrl.replace(/\/+$/, '');
+  if (!site) return [];
+  const wanted = ['sitemap-pages.xml', `${core.POSTS_DIR}/sitemap.xml`];
+  const present = [];
+  for (const file of wanted) if (await exists(path.join(outDir, file))) present.push(file);
+  if (!present.length) return [];
+  const body = present.map((file) => `  <sitemap><loc>${core.escapeHtml(`${site}/${file}`)}</loc></sitemap>`).join('\n');
+  await fs.writeFile(path.join(outDir, 'sitemap_index.xml'), `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</sitemapindex>\n`);
+  return present;
 }
 
 /* ---------- commands ---------- */
@@ -227,9 +261,11 @@ Options: --download-images   --out <folder>`);
   }
 
   const { settings, siteUrl } = await readSiteSettings();
-  const chrome = core.extractChrome(await fs.readFile(path.join(siteRoot, 'index.html'), 'utf8'));
+  const indexHtml = await fs.readFile(path.join(siteRoot, 'index.html'), 'utf8');
+  const chrome = core.extractChrome(indexHtml);
+  const permalinks = core.permalinkIds(indexHtml);
   if (command === 'pages') {
-    await importPages(args, outDir, { siteUrl, chrome });
+    await importPages(args, outDir, { siteUrl, chrome, permalinks });
     command = 'build'; // then refresh the blog too, so its redirects leave out any address a page now uses
   }
   let posts;
@@ -275,7 +311,7 @@ Options: --download-images   --out <folder>`);
     console.error('No published posts found, so nothing was written.');
     process.exit(1);
   }
-  const pagePaths = new Set(((await readSavedPages(outDir))?.pages || []).map(pagePath));
+  const pagePaths = new Set([...((await readSavedPages(outDir))?.pages || []).map(pagePath), ...permalinks]);
   const files = core.buildBlogFiles(posts, { settings, siteUrl, chrome, meta, skipRedirects: pagePaths });
   const result = await writeFiles(outDir, files);
   console.log(`Done. ${result.written} files written to ${path.join(outDir, core.POSTS_DIR)}${result.removed ? `, ${result.removed} old files removed` : ''}.`);
@@ -288,6 +324,12 @@ Options: --download-images   --out <folder>`);
     await writePageFiles(outDir, core.buildSitePages(savedPages.pages, { siteUrl, chrome, meta }));
     console.log(`Rebuilt ${savedPages.pages.length} pages.`);
   }
+
+  const listed = await writeSitemapIndex(outDir, { siteUrl });
+  if (listed.length) console.log(`Wrote sitemap_index.xml listing ${listed.join(' and ')}.`);
+
+  const written = await writeSectionPermalinks(outDir, { siteUrl });
+  if (written.length) console.log(`Wrote the clean addresses of ${written.length} home page sections: ${written.map((id) => `/${id}/`).join(' ')}`);
 }
 
 main().catch((error) => {

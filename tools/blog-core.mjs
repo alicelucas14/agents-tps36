@@ -466,6 +466,16 @@ export function preparePosts(rawPosts, { origin = '', toc = true } = {}) {
 
 /* ---------- pages ---------- */
 
+/**
+ * The sections of the home page that have a clean address of their own (/agency-plan/ instead of /#agency-plan).
+ * They are marked with a `data-permalink` attribute in index.html.
+ */
+export function permalinkIds(indexHtml) {
+  return [...String(indexHtml).matchAll(/<section\b[^>]*\sdata-permalink\b[^>]*>/g)]
+    .map((match) => match[0].match(/\sid="([^"]+)"/)?.[1])
+    .filter(Boolean);
+}
+
 /** Pulls the header, footer and font link out of index.html, so blog pages always match the site. */
 export function extractChrome(indexHtml) {
   const block = (tag, cls) => {
@@ -826,13 +836,14 @@ export async function fetchWpPages(address, slugs = null, { fetchImpl = globalTh
 }
 
 /** Cleans pages. Pages that cannot be kept (the home page, or a name this site already uses) are listed in `skipped`. */
-export function preparePages(rawPages, { origin = '', postSlugs = [], skipped = [] } = {}) {
+export function preparePages(rawPages, { origin = '', postSlugs = [], skipped = [], reservedRoots = [] } = {}) {
+  const reserved = new Set([...RESERVED_PAGE_ROOTS, ...reservedRoots]);
   const usable = [];
   for (const raw of rawPages) {
     const path = raw.path ?? raw.slug;
     if (!path) { skipped.push({ path: '/', reason: 'the home page is designed in index.html' }); continue; }
     if (!raw.title) { skipped.push({ path: `/${path}/`, reason: 'it has no title' }); continue; }
-    if (RESERVED_PAGE_ROOTS.has(path.split('/')[0])) { skipped.push({ path: `/${path}/`, reason: 'this site already uses that address' }); continue; }
+    if (reserved.has(path.split('/')[0])) { skipped.push({ path: `/${path}/`, reason: 'this site already uses that address' }); continue; }
     usable.push({ raw, path });
   }
   const paths = new Set(usable.map((entry) => entry.path));

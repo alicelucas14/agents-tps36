@@ -6,6 +6,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const get = (obj, path) => path.split('.').reduce((node, key) => (node == null ? node : node[key]), obj);
 
+  // A link to a section of the home page can be a plain #anchor or a clean address such as /agency-plan/.
+  // The sections that have a clean address carry a data-permalink attribute in index.html.
+  const permalinkOf = (pathname) => {
+    const parts = pathname.split('/').filter(Boolean);
+    if (parts.length !== 1) return '';
+    let name = parts[0];
+    try { name = decodeURIComponent(name); } catch { return ''; }
+    return Array.from(document.querySelectorAll('main [data-permalink]')).some((node) => node.id === name) ? name : '';
+  };
+
   const el = (tag, className, text) => {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -412,8 +422,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const sectionFor = (link) => {
     const href = link.getAttribute('href');
-    if (!href || href.length < 2 || href[0] !== '#') return null;
-    return document.getElementById(decodeURIComponent(href.slice(1)));
+    if (!href) return null;
+    if (href[0] === '#') return href.length > 1 ? document.getElementById(decodeURIComponent(href.slice(1))) : null;
+    try {
+      const url = new URL(link.href);
+      const id = url.origin === location.origin && !url.hash ? permalinkOf(url.pathname) : '';
+      return id ? document.getElementById(id) : null;
+    } catch {
+      return null;
+    }
   };
 
   function updateCurrentLink() {
@@ -458,28 +475,67 @@ document.addEventListener('DOMContentLoaded', () => {
 
   render();
 
-  // Opening a link such as /#how-to-join scrolls to the section while the images above it are still
-  // loading, so the page grows afterwards and the section ends up lower than the header. The jump is
-  // made instant while the page loads (the browser's own smooth scroll would keep running to an
-  // out-of-date position); once everything has loaded the section is put back under the header,
-  // unless the reader has already started scrolling.
-  if (onHome && location.hash.length > 1) {
+  // Opening an address that points at a section (/how-to-join/ or /#how-to-join) scrolls there while the
+  // images above it are still loading, so the page grows afterwards and the section ends up lower than
+  // the header. The jump is made instant while the page loads (the browser's own smooth scroll would keep
+  // running to an out-of-date position); once everything has loaded the section is put back under the
+  // header, unless the reader has already started scrolling. A reload or the back button is left alone,
+  // because the browser puts the reader back where they were.
+  let landingId = '';
+  if (onHome) {
+    try {
+      landingId = location.hash.length > 1 ? decodeURIComponent(location.hash.slice(1)) : permalinkOf(location.pathname);
+    } catch (err) {
+      landingId = '';
+    }
+  }
+  const navigationType = (window.performance && performance.getEntriesByType && performance.getEntriesByType('navigation')[0] || {}).type || 'navigate';
+  if (landingId && navigationType === 'navigate') {
     const root = document.documentElement;
     let readerMoved = false;
+    const jump = () => {
+      const target = document.getElementById(landingId);
+      if (target) target.scrollIntoView({ block: 'start' });
+    };
     root.style.scrollBehavior = 'auto';
+    // Unlike a #anchor, a clean address does not scroll by itself.
+    if (!location.hash) jump();
     ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((type) => {
       window.addEventListener(type, () => { readerMoved = true; }, { passive: true, once: true });
     });
     window.addEventListener('load', () => {
-      let target = null;
-      try {
-        target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
-      } catch (err) {
-        target = null;
-      }
-      if (target && !readerMoved) target.scrollIntoView({ block: 'start' });
+      if (!readerMoved) jump();
       root.style.scrollBehavior = '';
     });
+  }
+
+  // On the home page a link to one of its sections scrolls there smoothly and shows the clean address
+  // (/agency-plan/) instead of #agency-plan. The logo goes back to the top and shows /.
+  if (onHome) {
+    const scrollBehavior = () => (reducedMotion.matches ? 'auto' : 'smooth');
+    const showSection = (id, behavior) => {
+      const target = document.getElementById(id);
+      if (target) target.scrollIntoView({ behavior, block: 'start' });
+      else window.scrollTo({ top: 0, behavior });
+    };
+
+    document.addEventListener('click', (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const link = event.target.closest('a[href]');
+      if (!link || (link.target && link.target !== '_self') || link.hasAttribute('download')) return;
+      if (link.getAttribute('href')[0] === '#') return; // plain #anchors keep working the browser's own way
+      let url;
+      try { url = new URL(link.href); } catch (err) { return; }
+      if (url.origin !== location.origin || url.hash || url.search) return;
+      const id = permalinkOf(url.pathname);
+      const top = url.pathname === '/' || url.pathname === '/index.html';
+      if (!id && !top) return;
+      event.preventDefault();
+      showSection(id, scrollBehavior());
+      const clean = id ? `/${id}/` : '/';
+      if (location.pathname !== clean || location.hash) window.history.pushState({}, '', clean);
+    });
+    // The back and forward buttons need no code: the browser puts the reader back where they were.
   }
 
   let scrollFrame = 0;
