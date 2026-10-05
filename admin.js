@@ -276,22 +276,141 @@
     },
     {
       id: 'steps',
-      label: 'How it works',
-      intro: 'Numbered steps. Numbers follow the order below.',
+      label: 'Install guide',
+      intro: 'Phone screenshots with a numbered caption under each. Visitors move through them with the dots or by swiping. Numbers follow the order below.',
       blocks: [
         {
           title: 'Heading',
-          fields: [
-            { path: 'steps.eyebrow', label: 'Small label', type: 'text' },
-            { path: 'steps.title', label: 'Title', type: 'text' },
-          ],
+          fields: [{ path: 'steps.title', label: 'Heading', type: 'text', wide: true }],
         },
         {
           title: 'Steps',
           list: {
-            path: 'steps.items', itemName: 'Step', max: 6,
+            path: 'steps.items', itemName: 'Step', max: 12,
+            blank: { image: '', alt: '', text: '' },
+            fields: [
+              { key: 'image', label: 'Screenshot link', type: 'url', wide: true, hint: 'Best at about 253 × 450 pixels.' },
+              { key: 'alt', label: 'Screenshot description (for screen readers)', type: 'text', wide: true, hint: 'Leave empty if the caption already says it all.' },
+              { key: 'text', label: 'Caption', type: 'textarea', wide: true, hint: 'The step number is added for you, so do not type it.' },
+            ],
+          },
+        },
+      ],
+    },
+    {
+      id: 'agency',
+      label: 'Agency plan',
+      intro: 'The light “Big Agency Plan” section near the bottom: heading, highlights, plan image and numbered steps.',
+      blocks: [
+        {
+          title: 'Heading',
+          fields: [
+            { path: 'agencyPlan.title', label: 'Heading', type: 'text', wide: true },
+            { path: 'agencyPlan.intro', label: 'Text beside the heading', type: 'textarea', wide: true },
+          ],
+        },
+        {
+          title: 'Highlights',
+          list: {
+            path: 'agencyPlan.highlights', itemName: 'Highlight', max: 8,
+            blank: { image: '', alt: '', text: '' },
+            fields: [
+              { key: 'image', label: 'Icon link', type: 'url', wide: true, hint: 'Square image, shown at 90 × 90 pixels.' },
+              { key: 'alt', label: 'Icon description (for screen readers)', type: 'text', wide: true, hint: 'Leave empty for a purely decorative icon.' },
+              { key: 'text', label: 'Text', type: 'textarea', wide: true },
+            ],
+          },
+        },
+        {
+          title: 'Plan image',
+          fields: [
+            { path: 'agencyPlan.image', label: 'Image link', type: 'url', wide: true, hint: 'Best at about 639 × 458 pixels.' },
+            { path: 'agencyPlan.imageAlt', label: 'Image description (for screen readers)', type: 'text', wide: true },
+          ],
+        },
+        {
+          title: 'How it works',
+          fields: [{ path: 'agencyPlan.howTitle', label: 'Heading', type: 'text', wide: true }],
+        },
+        {
+          title: 'Steps',
+          list: {
+            path: 'agencyPlan.steps', itemName: 'Step', max: 8,
+            blank: { label: '', text: '' },
+            fields: [
+              { key: 'label', label: 'Bold label', type: 'text', hint: 'Numbers follow the order below.' },
+              { key: 'text', label: 'Text', type: 'textarea', wide: true },
+            ],
+          },
+        },
+        {
+          title: 'Example text',
+          list: {
+            path: 'agencyPlan.notes', itemName: 'Paragraph', max: 6,
+            blank: { text: '' },
+            fields: [{ key: 'text', label: 'Text', type: 'textarea', wide: true }],
+          },
+        },
+        {
+          title: 'Button',
+          fields: [
+            {
+              path: 'agencyPlan.buttonLabel', label: 'Button text', type: 'text',
+              hint: 'Its link is set under General → Download button.',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'benefit',
+      label: 'Agency benefit',
+      intro: 'The “Agency Benefit” section: a maroon band with expandable items beside a chart image.',
+      blocks: [
+        {
+          title: 'Heading',
+          fields: [{ path: 'agencyBenefit.title', label: 'Heading', type: 'text', wide: true }],
+        },
+        {
+          title: 'Expandable items',
+          list: {
+            path: 'agencyBenefit.items', itemName: 'Item', max: 8,
             blank: { title: '', text: '' },
             fields: [
+              { key: 'title', label: 'Title', type: 'text', wide: true },
+              { key: 'text', label: 'Text shown when opened', type: 'textarea', wide: true, hint: 'Press Enter to start a new paragraph.' },
+            ],
+          },
+        },
+        {
+          title: 'Chart image',
+          fields: [
+            { path: 'agencyBenefit.image', label: 'Image link', type: 'url', wide: true, hint: 'Best at about 768 × 662 pixels.' },
+            { path: 'agencyBenefit.imageAlt', label: 'Image description (for screen readers)', type: 'text', wide: true },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'agent',
+      label: 'How to join',
+      intro: 'The “How to Become a Big Agent” section: a heading and intro above a grey band of icon cards.',
+      blocks: [
+        {
+          title: 'Heading',
+          fields: [
+            { path: 'bigAgent.title', label: 'Heading', type: 'text', wide: true },
+            { path: 'bigAgent.intro', label: 'Text beside the heading', type: 'textarea', wide: true },
+          ],
+        },
+        {
+          title: 'Cards',
+          list: {
+            path: 'bigAgent.items', itemName: 'Card', max: 9,
+            blank: { image: '', alt: '', title: '', text: '' },
+            fields: [
+              { key: 'image', label: 'Icon link', type: 'url', wide: true, hint: 'Shown up to 92 × 78 pixels.' },
+              { key: 'alt', label: 'Icon description (for screen readers)', type: 'text', wide: true, hint: 'Leave empty for a purely decorative icon.' },
               { key: 'title', label: 'Title', type: 'text', wide: true },
               { key: 'text', label: 'Text', type: 'textarea', wide: true },
             ],
@@ -392,6 +511,31 @@
           fields: [
             { path: 'footer.copyright', label: 'Text', type: 'text', wide: true, hint: 'Type {year} to show the current year.' },
           ],
+        },
+      ],
+    },
+    {
+      id: 'social',
+      label: 'Social sidebar',
+      intro: 'The row of social icons that floats on the right edge of every page, including the blog.',
+      blocks: [
+        {
+          title: 'Icons',
+          list: {
+            path: 'socialBar.items', itemName: 'Icon', max: 8,
+            blank: { label: '', url: '', icon: 'facebook' },
+            fields: [
+              { key: 'label', label: 'Name', type: 'text', hint: 'Shown on hover and read out by screen readers.' },
+              { key: 'url', label: 'Link', type: 'url', hint: 'An icon with no link is hidden.' },
+              {
+                key: 'icon', label: 'Icon', type: 'select',
+                options: [
+                  ['telegram', 'Telegram'], ['youtube', 'YouTube'], ['facebook', 'Facebook'],
+                  ['instagram', 'Instagram'], ['whatsapp', 'WhatsApp'], ['twitter', 'Twitter'],
+                ],
+              },
+            ],
+          },
         },
       ],
     },

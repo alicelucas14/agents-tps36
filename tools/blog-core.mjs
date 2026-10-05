@@ -475,10 +475,14 @@ export function extractChrome(indexHtml) {
     return indexHtml.slice(start, end + tag.length + 3);
   };
   const fonts = indexHtml.match(/<link[^>]+fonts\.googleapis\.com\/css2[^>]*>/);
+  // The floating social icons are optional: an index.html without them just gives blog pages none.
+  const sidebarStart = indexHtml.search(/<nav\s+class="social-bar"/);
+  const sidebarEnd = sidebarStart < 0 ? -1 : indexHtml.indexOf('</nav>', sidebarStart);
   return {
     // Home-page anchors in the header must lead back to the home page from here.
     header: block('header', 'site-header').replace(/href="#([^"]*)"/g, (m, hash) => `href="/${hash ? `#${hash}` : ''}"`),
     footer: block('footer', 'site-footer'),
+    sidebar: sidebarEnd < 0 ? '' : indexHtml.slice(sidebarStart, sidebarEnd + '</nav>'.length),
     fonts: fonts ? fonts[0] : '',
   };
 }
@@ -512,7 +516,7 @@ ${chrome.header}
 ${body}
 
 ${chrome.footer}
-
+${chrome.sidebar ? `\n    ${chrome.sidebar}\n` : ''}
     <script src="/content.js"></script>
     <script src="/content-lib.js"></script>
     <script src="/script.js"></script>

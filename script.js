@@ -67,6 +67,22 @@ document.addEventListener('DOMContentLoaded', () => {
         return link;
       }),
 
+    // The floating sidebar: items without a link are left out, so clearing a link hides that icon.
+    'socialBar.items': (items) =>
+      items
+        .filter((item) => safeUrl(item.url))
+        .map((item) => {
+          const link = el('a');
+          link.href = safeUrl(item.url);
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.title = item.label;
+          link.dataset.network = item.icon;
+          if (ICONS[item.icon]) link.append(makeIcon(ICONS[item.icon]));
+          link.append(el('span', '', item.label));
+          return link;
+        }),
+
     features: (items, content) =>
       items.map((item) => {
         const card = el('article', 'stat-card feature-card');
@@ -78,16 +94,61 @@ document.addEventListener('DOMContentLoaded', () => {
         return card;
       }),
 
+    // Install guide: a phone screenshot with its numbered caption. Numbers follow the order.
     'steps.items': (items, content) =>
       items.map((item, index) => {
-        const card = el('article', 'step-card');
-        card.append(
-          el('span', 'step-number', String(index + 1)),
-          el('h3', '', format(item.title, content)),
-          el('p', '', format(item.text, content))
-        );
+        const slide = el('figure', 'install-slide');
+        slide.setAttribute('role', 'group');
+        slide.setAttribute('aria-roledescription', 'slide');
+        slide.setAttribute('aria-label', `${index + 1} of ${items.length}`);
+        const img = el('img');
+        img.src = safeUrl(item.image);
+        img.alt = format(item.alt, content);
+        slide.append(img, el('figcaption', '', `${index + 1}. ${format(item.text, content)}`));
+        return slide;
+      }),
+
+    'agencyPlan.highlights': (items, content) =>
+      items.map((item) => {
+        const box = el('div', 'plan-highlight');
+        const img = el('img');
+        img.src = safeUrl(item.image);
+        img.alt = format(item.alt, content);
+        box.append(img, el('p', '', format(item.text, content)));
+        return box;
+      }),
+
+    'agencyPlan.steps': (items, content) =>
+      items.map((item) => {
+        const row = el('li');
+        row.append(el('strong', '', format(item.label, content)), ` ${format(item.text, content)}`);
+        return row;
+      }),
+
+    'agencyPlan.notes': (items, content) => items.map((item) => el('p', '', format(item.text, content))),
+
+    'bigAgent.items': (items, content) =>
+      items.map((item) => {
+        const card = el('article', 'agent-card');
+        const img = el('img');
+        img.src = safeUrl(item.image);
+        img.alt = format(item.alt, content);
+        card.append(img, el('h3', '', format(item.title, content)), el('p', '', format(item.text, content)));
         return card;
       }),
+
+    'agencyBenefit.items': (items, content) => {
+      // Re-rendering after an admin edit must not close the items the reader has open.
+      const wasOpen = Array.from(document.querySelectorAll('[data-list="agencyBenefit.items"] details'), (node) => node.open);
+      return items.map((item, index) => {
+        const row = el('details', 'benefit-item');
+        row.open = Boolean(wasOpen[index]);
+        const body = el('div', 'benefit-body');
+        format(item.text, content).split(/\n+/).filter(Boolean).forEach((line) => body.append(el('p', '', line)));
+        row.append(el('summary', '', format(item.title, content)), body);
+        return row;
+      });
+    },
 
     'partners.items': (items, content) =>
       items.map((item) => {
@@ -133,7 +194,71 @@ document.addEventListener('DOMContentLoaded', () => {
       buildCarousel(root, get(content, root.dataset.carousel));
     });
 
+    document.querySelectorAll('.install-carousel').forEach(setupInstallDots);
+
     updateCurrentLink();
+  }
+
+  // Install guide: the slides sit in a row that scrolls sideways, so swiping, trackpads and the
+  // arrow keys all work without any script. The dots only jump a whole page (as many slides as fit).
+  function setupInstallDots(root) {
+    const viewport = root.querySelector('.install-viewport');
+    const dotsBox = root.querySelector('.install-dots');
+    const slideWidth = () => (viewport.firstElementChild ? viewport.firstElementChild.offsetWidth : 0);
+    const perView = () => (slideWidth() ? Math.max(1, Math.round(viewport.clientWidth / slideWidth())) : 1);
+    const pageCount = () => Math.ceil(viewport.children.length / perView());
+    const currentPage = () => {
+      const page = slideWidth() * perView();
+      return page ? Math.min(pageCount() - 1, Math.round(viewport.scrollLeft / page)) : 0;
+    };
+
+    const markDots = () => {
+      const now = currentPage();
+      Array.from(dotsBox.children).forEach((dot, i) => {
+        if (i === now) dot.setAttribute('aria-current', 'true');
+        else dot.removeAttribute('aria-current');
+      });
+    };
+
+    const buildDots = () => {
+      const pages = pageCount();
+      const per = perView();
+      const total = viewport.children.length;
+      dotsBox.hidden = pages < 2;
+      dotsBox.replaceChildren(
+        ...Array.from({ length: pages < 2 ? 0 : pages }, (_, i) => {
+          const dot = el('button', 'install-dot');
+          dot.type = 'button';
+          const first = i * per + 1;
+          const last = Math.min(total, first + per - 1);
+          dot.setAttribute('aria-label', first === last ? `Show step ${first}` : `Show steps ${first} to ${last}`);
+          dot.addEventListener('click', () => {
+            viewport.scrollTo({ left: i * slideWidth() * per, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+          });
+          return dot;
+        })
+      );
+      markDots();
+    };
+
+    // Editing in the admin rebuilds the slides; keep the reader where they were.
+    if (root.dataset.scroll) viewport.scrollLeft = Number(root.dataset.scroll);
+    buildDots();
+
+    if (root.dataset.ready) return;
+    root.dataset.ready = '1';
+    let frame = 0;
+    viewport.addEventListener('scroll', () => {
+      root.dataset.scroll = String(viewport.scrollLeft);
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        markDots();
+      });
+    }, { passive: true });
+    // The number of slides per page changes with the window width.
+    if ('ResizeObserver' in window) new ResizeObserver(buildDots).observe(viewport);
+    else window.addEventListener('resize', buildDots);
   }
 
   // Autoplaying banner slider: slides in from the right every 5s, loops without a rewind,
@@ -332,6 +457,30 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   render();
+
+  // Opening a link such as /#how-to-join scrolls to the section while the images above it are still
+  // loading, so the page grows afterwards and the section ends up lower than the header. The jump is
+  // made instant while the page loads (the browser's own smooth scroll would keep running to an
+  // out-of-date position); once everything has loaded the section is put back under the header,
+  // unless the reader has already started scrolling.
+  if (onHome && location.hash.length > 1) {
+    const root = document.documentElement;
+    let readerMoved = false;
+    root.style.scrollBehavior = 'auto';
+    ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach((type) => {
+      window.addEventListener(type, () => { readerMoved = true; }, { passive: true, once: true });
+    });
+    window.addEventListener('load', () => {
+      let target = null;
+      try {
+        target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      } catch (err) {
+        target = null;
+      }
+      if (target && !readerMoved) target.scrollIntoView({ block: 'start' });
+      root.style.scrollBehavior = '';
+    });
+  }
 
   let scrollFrame = 0;
   const scheduleCurrentLink = () => {
