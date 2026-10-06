@@ -928,8 +928,19 @@
   const BLOG_URL_KEY = 'tps_blog_wp_address';
   let blogCore = null;
   let blogData = null; // { posts, origin, source, importedAt } held in memory until downloaded
+  // The file is read as text and run from a blob. A direct import() fails on servers that send .mjs files as a
+  // plain download (application/octet-stream), which browsers refuse to run as a script.
   const loadBlogCore = async () => {
-    blogCore = blogCore || (await import('./tools/blog-core.mjs'));
+    if (!blogCore) {
+      const response = await fetch('tools/blog-core.mjs', { cache: 'no-cache' });
+      if (!response.ok) throw new Error('Could not read tools/blog-core.mjs from the site.');
+      const url = URL.createObjectURL(new Blob([await response.text()], { type: 'text/javascript' }));
+      try {
+        blogCore = await import(url);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
     return blogCore;
   };
 
@@ -2036,9 +2047,17 @@
       readOnly: published,
       hint: published ? 'The address of a published post cannot be changed, because visitors and Google already use it.' : addressHint(post.slug),
     });
+    // A new post's address follows its title until someone types an address of their own.
+    let addressTyped = Boolean(post.slug);
     address.input.addEventListener('input', () => {
       if (published) return;
+      addressTyped = true;
       address.hintEl.textContent = addressHint(core.normalizePostSlug(address.input.value));
+    });
+    title.input.addEventListener('input', () => {
+      if (published || addressTyped) return;
+      address.input.value = core.normalizePostSlug(title.input.value);
+      address.hintEl.textContent = addressHint(address.input.value);
     });
     const date = plainField({ label: 'Date', value: post.date.slice(0, 10), type: 'date', hint: 'Newer posts are shown first on the blog.' });
     const author = plainField({ label: 'Author (optional)', value: post.author || '', hint: `Left empty, the blog's author name is used${state.blog.author ? ` (${state.blog.author})` : ''}.` });
