@@ -220,7 +220,9 @@ async function writeSectionPermalinks(outDir, { siteUrl }) {
     let html = source.replace(/(\s(?:href|src)=")(?!https?:|\/|#|data:|mailto:|tel:)([^"]+")/g, '$1/$2');
     // Without JavaScript nothing scrolls to the section, so those browsers are sent to the #anchor, which scrolls by itself.
     const noScript = `    <noscript><meta http-equiv="refresh" content="0; url=/#${id}" /></noscript>\n`;
-    html = html.replace('</head>', `${site ? `    <link rel="canonical" href="${site}/" />\n` : ''}${noScript}  </head>`);
+    // The home page's own canonical tag (if it has one) already points at the home page, so it is not added twice.
+    const canonical = site && !/rel="canonical"/.test(html) ? `    <link rel="canonical" href="${site}/" />\n` : '';
+    html = html.replace('</head>', `${canonical}${noScript}  </head>`);
     await fs.mkdir(path.join(outDir, id), { recursive: true });
     await fs.writeFile(path.join(outDir, id, 'index.html'), html);
   }

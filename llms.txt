@@ -1,0 +1,43 @@
+# Teen Patti Stars Agents
+
+> Teen Patti Stars is a Teen Patti (3 Patti) card-game app for players in India. This site is for people who want to become a Teen Patti Stars agent: it explains the Big Agency Plan, how commission is earned, how to join, how to install the app, and it holds guides to Teen Patti and other card and casino games.
+
+Facts as stated on the site (check the linked pages for the current wording):
+- Agents earn commission, shown as "up to 70%" revenue share, based on the net profit of the players they refer. The home page works through an example with a 50% negative profit-sharing ratio.
+- Joining as an agent is free. Agents track referred players and earnings on a platform dashboard and receive a unique referral code.
+- The app is installed as an Android APK from the official site; the home page lists the installation steps.
+- The games are for people aged 18 and over and are not offered in Assam, Arunachal Pradesh, Andhra Pradesh, Telangana, Orissa and Nagaland. The site encourages responsible play.
+
+## Become an agent
+- [Teen Patti Agent: earn commission](https://agents.teenpattistars.io/): the agent programme, commission, instant withdrawals and how to install the app
+- [Big Agency Plan](https://agents.teenpattistars.io/agency-plan/): how payouts and incentives are calculated
+- [How it works](https://agents.teenpattistars.io/how-it-works/): download, sign up, refer players, earn commission
+- [Agency benefit](https://agents.teenpattistars.io/agency-benefit/): sharing, weekly, progress and tax commission bonuses
+- [How to join](https://agents.teenpattistars.io/how-to-join/): registration and the ways agents bring in players
+- [Big Agent India](https://agents.teenpattistars.io/big-agent-india/)
+- [Earning with Teen Patti Stars in India](https://agents.teenpattistars.io/earning-with-teen-patti-stars-in-india/)
+- [Teen Patti referral bonus](https://agents.teenpattistars.io/teen-patti-referral-bonus/)
+- [Teen Patti rewards](https://agents.teenpattistars.io/teen-patti-rewards/)
+
+## Learn the games
+- [How to play the Teen Patti card game online safely](https://agents.teenpattistars.io/how-to-play-teen-patti-card-game-online/)
+- [Teen Patti games and casino variations](https://agents.teenpattistars.io/teen-patti-games/)
+- [Teen Patti all: variations explained](https://agents.teenpattistars.io/teen-patti-deep-dive-into-its-variations/)
+- [Casino games online](https://agents.teenpattistars.io/casino-games-online/)
+- [Mini games online](https://agents.teenpattistars.io/mini-games-online/)
+- [Lottery games online](https://agents.teenpattistars.io/lottery-games-online/)
+- [Online bingo games](https://agents.teenpattistars.io/online-bingo-games/)
+- [Racing games online](https://agents.teenpattistars.io/racing-games-online/)
+- [Rummy wealth](https://agents.teenpattistars.io/rummy-wealth/)
+- [3 Patti free chips](https://agents.teenpattistars.io/3-patti-free-chips/)
+
+## Regional pages
+- [Teen Patti Rajasthan](https://agents.teenpattistars.io/teen-patti-rajasthan/)
+- [Teen Patti Gujarat](https://agents.teenpattistars.io/teen-patti-gujarat/)
+- [Teen Patti Bihar](https://agents.teenpattistars.io/teen-patti-bihar/)
+
+## Blog
+- [All blog posts](https://agents.teenpattistars.io/blogs/): more than 240 guides on Teen Patti rules and hand rankings, strategy, bonuses, the Teen Patti Stars app, and the agent and affiliate programme
+
+## Optional
+- [Sitemap index](https://agents.teenpattistars.io/sitemap_index.xml): every page and post

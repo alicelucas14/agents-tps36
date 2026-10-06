@@ -1,0 +1,14 @@
+# https://agents.teenpattistars.io
+# Everything public may be crawled. Only the importer's working files and data dumps are kept out of the crawl.
+
+User-agent: *
+Allow: /
+Disallow: /tools/
+Disallow: /pages.json
+Disallow: /blogs/posts.json
+Disallow: /blogs/redirects.txt
+Disallow: /blogs/redirects.nginx.conf
+# Pages may be used for search and for answers given by AI assistants. Training use is not stated here.
+Content-Signal: search=yes, ai-input=yes
+
+Sitemap: https://agents.teenpattistars.io/sitemap_index.xml

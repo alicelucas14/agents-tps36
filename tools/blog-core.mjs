@@ -53,6 +53,74 @@ const clip = (text, max) => {
   return `${cut} …`;
 };
 
+/* ---------- what search engines and social sites read ---------- */
+
+// Google shows about 60 characters of a title. The site name is only added while it still fits.
+const seoTitle = (title, siteName) => {
+  const full = `${title} | ${siteName}`;
+  return full.length <= 65 ? full : title;
+};
+
+// A description of up to ~155 characters that ends at the end of a sentence where it can, instead of in the middle of one.
+function metaDescription(text, max = 155) {
+  const plain = String(text).replace(/\s+/g, ' ').trim();
+  if (plain.length <= max) return plain;
+  const window = plain.slice(0, max);
+  const sentenceEnd = Math.max(window.lastIndexOf('. '), window.lastIndexOf('! '), window.lastIndexOf('? '));
+  if (sentenceEnd >= max * 0.55) return window.slice(0, sentenceEnd + 1);
+  return `${window.replace(/[\s,;:–—-]*\S*$/, '').replace(/[\s,;:–—-]+$/, '')}…`;
+}
+
+// The site's own pictures, used when a page has none of its own.
+const SHARE_IMAGE_PATH = '/og-default.jpg';
+const LOGO_PATH = '/apple-touch-icon.png';
+
+/** The organisation and the website, which every page's structured data points back to. */
+function siteNodes({ site, siteName, social = [] }) {
+  if (!site) return [];
+  return [
+    {
+      '@type': 'Organization',
+      '@id': `${site}/#organization`,
+      name: siteName,
+      url: `${site}/`,
+      logo: { '@type': 'ImageObject', url: `${site}${LOGO_PATH}`, width: 180, height: 180 },
+      ...(social.length ? { sameAs: social } : {}),
+    },
+    { '@type': 'WebSite', '@id': `${site}/#website`, url: `${site}/`, name: siteName, inLanguage: 'en', publisher: { '@id': `${site}/#organization` } },
+  ];
+}
+
+const breadcrumbNode = (items) => ({
+  '@type': 'BreadcrumbList',
+  itemListElement: items.map((item, index) => ({ '@type': 'ListItem', position: index + 1, name: item.name, item: item.url })),
+});
+
+/**
+ * Gives the headings of a text a clean outline under the page's own <h1>: the first heading becomes an <h2> and none
+ * skips a level (imported posts often jump from the title straight to an <h3> or <h4>). Text that is already in order is unchanged.
+ */
+export function outlineHeadings(html) {
+  const open = [];
+  return String(html).replace(/<h([2-6])\b([^>]*)>([\s\S]*?)<\/h\1>/gi, (match, level, attributes, inner) => {
+    const from = Number(level);
+    while (open.length && open[open.length - 1].from >= from) open.pop();
+    const to = open.length ? Math.min(open[open.length - 1].to + 1, 6) : 2;
+    open.push({ from, to });
+    return `<h${to}${attributes}>${inner}</h${to}>`;
+  });
+}
+
+/** Pictures after the first load only when they get near the screen, which keeps the top of the page fast. */
+export function lazyImages(html) {
+  let seen = 0;
+  return String(html).replace(/<img\b[^>]*>/gi, (tag) => {
+    seen += 1;
+    if (seen === 1 || /\sloading\s*=/i.test(tag)) return tag;
+    return tag.replace(/\s*\/?>$/, (end) => ` loading="lazy" decoding="async"${end}`);
+  });
+}
+
 /* ---------- HTML cleaning ---------- */
 
 const VOID_TAGS = new Set(['br', 'hr', 'img', 'input', 'meta', 'link', 'source', 'wbr', 'col', 'area', 'base', 'embed', 'param', 'track']);
@@ -488,18 +556,26 @@ export function extractChrome(indexHtml) {
   // The floating social icons are optional: an index.html without them just gives blog pages none.
   const sidebarStart = indexHtml.search(/<nav\s+class="social-bar"/);
   const sidebarEnd = sidebarStart < 0 ? -1 : indexHtml.indexOf('</nav>', sidebarStart);
+  const footer = block('footer', 'site-footer');
+  const socialNav = footer.match(/<nav\s+class="footer-social"[\s\S]*?<\/nav>/)?.[0] || '';
   return {
     // Home-page anchors in the header must lead back to the home page from here.
     header: block('header', 'site-header').replace(/href="#([^"]*)"/g, (m, hash) => `href="/${hash ? `#${hash}` : ''}"`),
-    footer: block('footer', 'site-footer'),
+    footer,
     sidebar: sidebarEnd < 0 ? '' : indexHtml.slice(sidebarStart, sidebarEnd + '</nav>'.length),
     fonts: fonts ? fonts[0] : '',
+    // The site's own profiles, which tell search engines and AI assistants that these accounts belong to the same brand.
+    social: [...socialNav.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((match) => decodeEntities(match[1])),
   };
 }
 
 const jsonForScript = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
 
-function pageShell({ title, description, canonical, image, type = 'website', jsonLd, chrome, body }) {
+function pageShell({ title, description, canonical, image, type = 'website', graph = [], chrome, body, site = '', siteName = '', noindex = false, published = '', modified = '' }) {
+  // Pages without a picture of their own still get a branded one when shared.
+  const usingDefaultImage = !image && Boolean(site);
+  const shareImage = image || (site ? `${site}${SHARE_IMAGE_PATH}` : '');
+  const schema = graph.length ? { '@context': 'https://schema.org', '@graph': graph } : null;
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -507,18 +583,32 @@ function pageShell({ title, description, canonical, image, type = 'website', jso
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${escapeHtml(title)}</title>
     <meta name="description" content="${escapeHtml(description)}" />
+    <meta name="robots" content="${noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'}" />
     ${canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}" />` : ''}
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#2d0a2a" />
     <meta property="og:type" content="${type}" />
+    ${siteName ? `<meta property="og:site_name" content="${escapeHtml(siteName)}" />` : ''}
+    <meta property="og:locale" content="en_IN" />
     <meta property="og:title" content="${escapeHtml(title)}" />
     <meta property="og:description" content="${escapeHtml(description)}" />
     ${canonical ? `<meta property="og:url" content="${escapeHtml(canonical)}" />` : ''}
-    ${image ? `<meta property="og:image" content="${escapeHtml(image)}" />\n    <meta name="twitter:card" content="summary_large_image" />` : '<meta name="twitter:card" content="summary" />'}
+    ${shareImage ? `<meta property="og:image" content="${escapeHtml(shareImage)}" />` : ''}
+    ${usingDefaultImage ? '<meta property="og:image:width" content="1200" />\n    <meta property="og:image:height" content="630" />' : ''}
+    ${type === 'article' && published ? `<meta property="article:published_time" content="${escapeHtml(published)}" />` : ''}
+    ${type === 'article' && modified ? `<meta property="article:modified_time" content="${escapeHtml(modified)}" />` : ''}
+    <meta name="twitter:card" content="${shareImage ? 'summary_large_image' : 'summary'}" />
+    <meta name="twitter:title" content="${escapeHtml(title)}" />
+    <meta name="twitter:description" content="${escapeHtml(description)}" />
+    ${shareImage ? `<meta name="twitter:image" content="${escapeHtml(shareImage)}" />` : ''}
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     ${chrome.fonts}
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/blog.css" />
-    ${jsonLd ? `<script type="application/ld+json">${jsonForScript(jsonLd)}</script>` : ''}
+    ${schema ? `<script type="application/ld+json">${jsonForScript(schema)}</script>` : ''}
   </head>
   <body class="blog-page" data-keep-title>
 ${chrome.header}
@@ -599,7 +689,7 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
       <div class="blog-head">
         <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">›</span><span aria-current="page">${escapeHtml(title)}</span></nav>
         <div class="blog-head-row">
-          <h1 id="blog-heading">${escapeHtml(title)}</h1>
+          <h1 id="blog-heading">${escapeHtml(heading)}</h1>
           ${searchForm('list')}
         </div>
       </div>
@@ -609,12 +699,20 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
       </div>
       <div id="blog-pagination">${pagination(page, pages)}</div>
     </main>`;
+    const listUrl = abs(pageUrl(page));
     files.push({
       path: page === 1 ? `${POSTS_DIR}/index.html` : `${POSTS_DIR}/page/${page}/index.html`,
       content: pageShell({
-        title: `${heading} | ${siteName}`,
-        description: `${title} from ${siteName}: guides, tips and news for Teen Patti players and agents.`,
-        canonical: abs(pageUrl(page)),
+        title: seoTitle(heading, siteName),
+        // Every page of the list gets its own description, so search engines do not see them as copies of each other.
+        description: `${title} from ${siteName}: guides, tips and news for Teen Patti players and agents.${page > 1 ? ` Page ${page} of ${pages}.` : ''}`,
+        canonical: listUrl,
+        site, siteName,
+        graph: site ? [
+          ...siteNodes({ site, siteName, social: chrome.social }),
+          { '@type': 'CollectionPage', '@id': listUrl, url: listUrl, name: heading, isPartOf: { '@id': `${site}/#website` }, inLanguage: 'en' },
+          breadcrumbNode([{ name: 'Home', url: `${site}/` }, { name: title, url: abs(pageUrl(1)) }]),
+        ] : [],
         chrome, body,
       }),
     });
@@ -638,7 +736,7 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
           <h1 class="post-title">${escapeHtml(post.title)}</h1>
           <p class="post-meta">${metaLine}</p>
           <div class="post-content">
-${post.html}
+${lazyImages(outlineHeadings(post.html))}
           </div>
           ${post.tags.length ? `<p class="post-tags"><span class="visually-hidden">Tags:</span> ${post.tags.map((tag) => `<a href="/${POSTS_DIR}/?s=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(' ')}</p>` : ''}
           <nav class="post-nav" aria-label="More posts">
@@ -660,26 +758,39 @@ ${post.html}
         </aside>
       </div>
     </main>`;
-    const description = clip(post.excerpt || stripTags(post.html), 158);
+    const description = metaDescription(post.excerpt || stripTags(post.html));
+    const image = post.image && /^https?:/i.test(post.image.src) ? post.image.src : post.image && site ? `${site}${post.image.src}` : '';
     files.push({
       path: `${POSTS_DIR}/${post.slug}/index.html`,
       content: pageShell({
-        title: `${post.title} | ${siteName}`,
+        title: seoTitle(post.title, siteName),
         description,
         canonical: url,
-        image: post.image && /^https?:/i.test(post.image.src) ? post.image.src : post.image && site ? `${site}${post.image.src}` : '',
+        image,
         type: 'article',
-        jsonLd: {
-          '@context': 'https://schema.org',
-          '@type': 'BlogPosting',
-          headline: post.title,
-          datePublished: post.date,
-          dateModified: post.modified || post.date,
-          ...(authorOf(post) ? { author: { '@type': 'Person', name: authorOf(post) } } : {}),
-          publisher: { '@type': 'Organization', name: siteName },
-          ...(url ? { mainEntityOfPage: url } : {}),
-          ...(post.image && /^https?:/i.test(post.image.src) ? { image: post.image.src } : {}),
-        },
+        site, siteName,
+        published: post.date,
+        modified: post.modified || post.date,
+        graph: site ? [
+          ...siteNodes({ site, siteName, social: chrome.social }),
+          {
+            '@type': 'BlogPosting',
+            '@id': `${url}#article`,
+            headline: clip(post.title, 110),
+            description,
+            datePublished: post.date,
+            dateModified: post.modified || post.date,
+            author: authorOf(post) ? { '@type': 'Person', name: authorOf(post) } : { '@id': `${site}/#organization` },
+            publisher: { '@id': `${site}/#organization` },
+            isPartOf: { '@id': `${site}/#website` },
+            mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+            image: [image || `${site}${SHARE_IMAGE_PATH}`],
+            inLanguage: 'en',
+            ...(post.category ? { articleSection: post.category } : {}),
+            ...(post.tags.length ? { keywords: post.tags.join(', ') } : {}),
+          },
+          breadcrumbNode([{ name: 'Home', url: `${site}/` }, { name: title, url: abs(pageUrl(1)) }, { name: clip(post.title, 60), url }]),
+        ] : [],
         chrome, body,
       }),
     });
@@ -698,10 +809,12 @@ ${post.html}
   // For search engines, and for pointing the old WordPress addresses at the new pages
   const urls = [abs(`/${POSTS_DIR}/`), ...posts.map((p) => abs(postUrl(p)))];
   if (site) {
+    const modifiedOn = (post) => (post.modified || post.date).slice(0, 10);
+    const newest = posts.map(modifiedOn).sort().pop();
     files.push({
       path: `${POSTS_DIR}/sitemap.xml`,
       content: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
-        .map((loc, i) => `  <url><loc>${escapeHtml(loc)}</loc>${i > 0 ? `<lastmod>${escapeHtml((posts[i - 1].modified || posts[i - 1].date).slice(0, 10))}</lastmod>` : ''}</url>`)
+        .map((loc, i) => `  <url><loc>${escapeHtml(loc)}</loc>${i > 0 ? `<lastmod>${escapeHtml(modifiedOn(posts[i - 1]))}</lastmod>` : newest ? `<lastmod>${escapeHtml(newest)}</lastmod>` : ''}</url>`)
         .join('\n')}\n</urlset>\n`,
     });
   }
@@ -980,30 +1093,67 @@ export function buildSitePages(rawPages, { siteUrl = '', chrome, siteName = 'Tee
         <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">›</span>${parents}<span aria-current="page">${escapeHtml(clip(page.title, 60))}</span></nav>
         <h1 class="post-title">${escapeHtml(page.title)}</h1>
         <div class="post-content">
-${page.html}
+${lazyImages(outlineHeadings(page.html))}
         </div>
       </article>
     </main>`;
+    const description = metaDescription(page.description || stripTags(page.html));
+    const crumbs = [
+      { name: 'Home', url: `${site}/` },
+      ...parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/')).filter((path) => titleByPath.has(path)).map((path) => ({ name: clip(titleByPath.get(path), 40), url: abs(`/${path}/`) })),
+      { name: clip(page.title, 60), url },
+    ];
     files.push({
       path: `${page.path}/index.html`,
       content: pageShell({
-        title: `${page.title} | ${siteName}`,
-        description: page.description,
+        title: seoTitle(page.title, siteName),
+        description,
         canonical: url,
         image: /^https?:/i.test(page.image) ? page.image : page.image && site ? `${site}${page.image}` : '',
-        jsonLd: {
-          '@context': 'https://schema.org',
-          '@type': 'WebPage',
-          name: page.title,
-          description: page.description,
-          ...(url ? { url } : {}),
-          dateModified: page.modified || page.date,
-          isPartOf: { '@type': 'WebSite', name: siteName, ...(site ? { url: site } : {}) },
-        },
+        site, siteName,
+        graph: site ? [
+          ...siteNodes({ site, siteName, social: chrome.social }),
+          {
+            '@type': 'WebPage',
+            '@id': url,
+            url,
+            name: page.title,
+            description,
+            dateModified: page.modified || page.date,
+            isPartOf: { '@id': `${site}/#website` },
+            inLanguage: 'en',
+          },
+          breadcrumbNode(crumbs),
+        ] : [],
         chrome, body,
       }),
     });
   }
+
+  // A page for addresses that do not exist. The server has to be told to use it (see tools/README.md).
+  files.push({
+    path: '404.html',
+    content: pageShell({
+      title: `Page not found | ${siteName}`,
+      description: 'That page is not here. Try the blog or go back to the home page.',
+      noindex: true,
+      chrome,
+      body: `    <main class="blog-main">
+      <article class="post page-article">
+        <h1 class="post-title">Page not found</h1>
+        <div class="post-content">
+          <p>The address may have changed, or the page may have moved. These links should help:</p>
+          <ul>
+            <li><a href="/">Teen Patti Stars home page</a></li>
+            <li><a href="/${POSTS_DIR}/">Read the blog</a></li>
+            <li><a href="/big-agent-india/">Big Agent India</a></li>
+          </ul>
+          ${searchForm('missing')}
+        </div>
+      </article>
+    </main>`,
+    }),
+  });
 
   // Data for rebuilding later without fetching again
   files.push({

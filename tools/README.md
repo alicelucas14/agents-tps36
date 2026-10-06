@@ -120,6 +120,33 @@ and run `build`.
 `sitemap_index.xml` lists `sitemap-pages.xml` and `blogs/sitemap.xml`. WordPress published its sitemaps at that
 same address, so Google keeps finding them.
 
+## Search engines and AI assistants
+
+Every page `build` writes carries what search engines, social sites and AI assistants read:
+
+- a title (the site name is added only while the title stays within about 65 characters), a description of up to
+  155 characters that ends at the end of a sentence where it can, a canonical link, `robots` directives that allow
+  large picture previews, icons, and Open Graph / Twitter tags with a share picture (`og-default.jpg` when the page has none);
+- structured data (JSON-LD): the organisation (with the social profiles found in the footer) and the website on every
+  page, plus `BlogPosting`, `WebPage` or `CollectionPage` and a `BreadcrumbList`;
+- headings in a clean order under the single `<h1>` (the first heading in a text becomes an `<h2>`, none skips a level),
+  and pictures after the first one load lazily;
+- every page of the blog list has its own heading and description (`Blogs – Page 2`), so they do not look like copies.
+
+Files in the site folder that belong to this and are not generated:
+
+```
+robots.txt            allows everything public, keeps tools/ and the data dumps out, names the sitemap
+llms.txt              a short guide to the site for AI assistants (edit it when key pages change)
+favicon.ico, favicon-48.png, apple-touch-icon.png   the icons, made from the logo
+og-default.jpg        the 1200 x 630 picture shown when a page without a picture of its own is shared
+404.html              the "page not found" page (written by build)
+```
+
+The head of the **home page** (`index.html`) is written by hand: its canonical link, share tags and structured data
+carry the site address and title as text, so update them there if the address or the main title ever changes.
+To show `404.html` for missing addresses, add `error_page 404 /404.html;` in the aaPanel site's configuration.
+
 ## Settings
 
 In the admin: **Blog** (title, author name, posts per page) and **General → Site address**
