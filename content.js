@@ -13,7 +13,7 @@ window.SITE_DEFAULTS = {
   },
   "header": {
     "downloadLabel": "DOWNLOAD GAME",
-    "downloadUrl": "https://bit.ly/4iwW8FR"
+    "downloadUrl": "https://pattistars.com/apk/f45b97cd119f4bdc8bab5b57db566f72.apk"
   },
   "menu": [
     { "label": "About Agency", "url": "/agency-plan/" },
