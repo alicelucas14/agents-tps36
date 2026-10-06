@@ -741,6 +741,9 @@ ${post.html}
       `#   include /www/wwwroot/YOUR-SITE-FOLDER/${POSTS_DIR}/redirects.nginx.conf;`,
       '# Behind Cloudflare, nginx sees plain http and would write redirects as http://...; relative ones keep the visitor on https.',
       'absolute_redirect off;',
+      '# Scripts, styles and data files are checked for a newer copy on every visit (a quick 304 when nothing changed).',
+      '# aaPanel keeps them for 12 hours by default, and Cloudflare keeps its own copy for as long, so edits would not show up.',
+      'location ~* "\\.(?:js|mjs|css|json)$" { expires -1; }',
       ...groups.map((names) => `location ~ "^/(${names.join('|')})/?$" { return 301 /${POSTS_DIR}/$1/; }`),
       ...renamed.map((p) => `location = /${p.originalSlug}/ { return 301 ${postUrl(p)}; }`),
       '# WordPress listed every post under this category page',
@@ -875,6 +878,29 @@ export function pageAddressProblem(path, { pages = [], postSlugs = [], reservedR
   if (new Set([...RESERVED_PAGE_ROOTS, ...reservedRoots]).has(root)) return `"${root}" is already used by the site. Choose another name.`;
   if (path !== self && pages.some((page) => (page.path ?? page.slug) === path)) return 'A page with this address already exists.';
   if (!path.includes('/') && postSlugs.includes(path)) return 'An old blog post used this address, and it redirects to the blog. Choose another name.';
+  return '';
+}
+
+/** The cleaning a blog post's text goes through: the same as for imported posts (a table of contents from four headings up). */
+export function cleanPostHtml(contentHtml) {
+  return addStructure(sanitizeHtml(contentHtml), { toc: true });
+}
+
+/** A short summary taken from the first paragraph, for the blog list. */
+export function excerptFrom(html, max = 220) {
+  return clip(stripTags(String(html).match(/<p>[\s\S]*?<\/p>/i)?.[0] || ''), max);
+}
+
+/** Turns what someone typed into a post address: "My New Post!" -> "my-new-post". */
+export function normalizePostSlug(input) {
+  return normalizePagePath(input).replace(/\//g, '-');
+}
+
+/** Why an address cannot be used for a post, or '' when it can. `self` is the post's own address when editing it. */
+export function postSlugProblem(slug, { posts = [], self = '' } = {}) {
+  if (!slug) return 'Enter an address, for example my-new-post.';
+  if (RESERVED_SLUGS.has(slug)) return `"${slug}" is used by the blog itself. Choose another name.`;
+  if (slug !== self && posts.some((post) => post.slug === slug)) return 'A post with this address already exists.';
   return '';
 }
 

@@ -443,7 +443,7 @@
     {
       id: 'blog',
       label: 'Blog',
-      intro: 'Bring your WordPress posts onto this site as fast, searchable blog pages.',
+      intro: 'The blog title, author name and posts per page, and a way to bring posts across from a WordPress site that is still online. To write or edit posts, use the Posts section.',
       after: 'blog',
       blocks: [
         {
@@ -455,6 +455,12 @@
           ],
         },
       ],
+    },
+    {
+      id: 'posts',
+      label: 'Posts',
+      intro: 'Write new blog posts and edit the ones you have. Changes are kept in this browser until you download the blog files and put them on your site.',
+      custom: 'posts',
     },
     {
       id: 'footer',
@@ -1154,9 +1160,9 @@
 
   const pagePathOf = (page) => page.path ?? page.slug;
 
-  function readPagesDraft() {
+  function readDraftFrom(key) {
     try {
-      const raw = JSON.parse(local.get(PAGES_DRAFT_KEY) || 'null');
+      const raw = JSON.parse(local.get(key) || 'null');
       if (raw && typeof raw === 'object') {
         return {
           edited: raw.edited && typeof raw.edited === 'object' ? raw.edited : {},
@@ -1167,6 +1173,8 @@
     } catch { /* a damaged draft is ignored */ }
     return { edited: {}, added: {}, removed: [] };
   }
+
+  const readPagesDraft = () => readDraftFrom(PAGES_DRAFT_KEY);
 
   const pagesChangeCount = () => Object.keys(pagesDraft.edited).length + Object.keys(pagesDraft.added).length + pagesDraft.removed.length;
 
@@ -1421,92 +1429,44 @@
     return nodes;
   }
 
-  function buildPageEditor() {
-    const core = blogCore;
-    const isNew = !pagesView.path;
-    const existing = isNew ? null : currentPages().find((page) => pagePathOf(page) === pagesView.path);
-    if (!isNew && !existing) {
-      pagesView.mode = 'list';
-      return buildPageList();
+  // One labelled text box (or text area) with a hint and an error line, used by the page and post editors.
+  const plainField = ({ label, value, type = 'text', hint, rows, readOnly }) => {
+    fieldCounter += 1;
+    const id = `field-${fieldCounter}`;
+    const wrap = el('div', 'field wide');
+    const labelEl = el('label', '', label);
+    labelEl.htmlFor = id;
+    const input = rows ? el('textarea') : el('input');
+    input.id = id;
+    if (rows) input.rows = rows;
+    else input.type = type === 'date' ? 'date' : 'text';
+    if (type === 'url') input.inputMode = 'url';
+    input.value = value;
+    if (readOnly) input.readOnly = true;
+    const message = el('p', 'field-msg');
+    message.id = `${id}-msg`;
+    const describedBy = [message.id];
+    wrap.append(labelEl, input);
+    if (hint) {
+      const hintEl = el('p', 'field-hint', hint);
+      hintEl.id = `${id}-hint`;
+      describedBy.push(hintEl.id);
+      wrap.append(hintEl);
     }
-    const page = existing || { title: '', path: '', description: '', image: '', html: '<p></p>' };
-    const livePath = isNew ? '' : pagePathOf(page);
-    const siteUrl = (state.seo.siteUrl || '').replace(/\/+$/, '');
-
-    const backToList = () => {
-      pagesView.mode = 'list';
-      renderEditor();
+    wrap.append(message);
+    input.setAttribute('aria-describedby', describedBy.join(' '));
+    const fail = (text) => {
+      message.textContent = text;
+      input.classList.toggle('invalid', Boolean(text));
+      input.setAttribute('aria-invalid', String(Boolean(text)));
+      return !text;
     };
-    const back = el('button', 'btn btn-back', '← All pages');
-    back.type = 'button';
-    back.addEventListener('click', backToList);
+    return { wrap, input, fail, hintEl: wrap.querySelector('.field-hint') };
+  };
 
-    const plainField = ({ label, value, type = 'text', hint, rows, readOnly }) => {
-      fieldCounter += 1;
-      const id = `field-${fieldCounter}`;
-      const wrap = el('div', 'field wide');
-      const labelEl = el('label', '', label);
-      labelEl.htmlFor = id;
-      const input = rows ? el('textarea') : el('input');
-      input.id = id;
-      if (rows) input.rows = rows;
-      else input.type = 'text';
-      if (type === 'url') input.inputMode = 'url';
-      input.value = value;
-      if (readOnly) input.readOnly = true;
-      const message = el('p', 'field-msg');
-      message.id = `${id}-msg`;
-      const describedBy = [message.id];
-      wrap.append(labelEl, input);
-      if (hint) {
-        const hintEl = el('p', 'field-hint', hint);
-        hintEl.id = `${id}-hint`;
-        describedBy.push(hintEl.id);
-        wrap.append(hintEl);
-      }
-      wrap.append(message);
-      input.setAttribute('aria-describedby', describedBy.join(' '));
-      const fail = (text) => {
-        message.textContent = text;
-        input.classList.toggle('invalid', Boolean(text));
-        input.setAttribute('aria-invalid', String(Boolean(text)));
-        return !text;
-      };
-      return { wrap, input, fail, hintEl: wrap.querySelector('.field-hint') };
-    };
-
-    const card = el('section', 'card');
-    card.append(el('h3', '', isNew ? 'New page' : 'Edit page'));
-    const fields = el('div', 'fields');
-    const title = plainField({ label: 'Title', value: page.title });
-    const address = plainField({
-      label: 'Address',
-      value: livePath,
-      readOnly: !isNew,
-      hint: isNew
-        ? 'Letters, numbers and hyphens, for example my-new-page. Use games/my-game to put it under an existing page.'
-        : 'The address of an existing page cannot be changed, because visitors and Google already use it.',
-    });
-    const addressPreview = () => {
-      if (!isNew) return;
-      const path = core.normalizePagePath(address.input.value);
-      address.hintEl.textContent = path ? `This page will be at ${siteUrl || ''}/${path}/` : 'Letters, numbers and hyphens, for example my-new-page. Use games/my-game to put it under an existing page.';
-    };
-    address.input.addEventListener('input', addressPreview);
-    const description = plainField({ label: 'Description for search engines', value: page.description || '', rows: 3, hint: 'Shown under the title in Google results. About 150 characters works best.' });
-    const count = el('p', 'field-hint');
-    const countDescription = () => {
-      const length = description.input.value.trim().length;
-      count.textContent = `${length} characters${length > 160 ? ' (Google may cut it short)' : ''}`;
-    };
-    description.input.addEventListener('input', countDescription);
-    countDescription();
-    description.wrap.insertBefore(count, description.wrap.querySelector('.field-msg'));
-    const image = plainField({ label: 'Share picture link (optional)', value: page.image || '', type: 'url', hint: 'The picture shown when the page is shared. Left empty, the first picture in the page is used.' });
-    fields.append(title.wrap, address.wrap, description.wrap, image.wrap);
-    card.append(fields);
-
-    // The text itself, with a small toolbar.
+  // The text editor shared by the page and post editors: a toolbar, a writing area that looks like the page,
+  // and an HTML view. Whatever is typed or pasted is cleaned again when the page or post is saved.
+  function buildRichEditor(core, initialHtml) {
     fieldCounter += 1;
     const contentId = `field-${fieldCounter}`;
     const contentWrap = el('div', 'field');
@@ -1520,7 +1480,7 @@
     rich.contentEditable = 'true';
     rich.setAttribute('role', 'textbox');
     rich.setAttribute('aria-multiline', 'true');
-    rich.innerHTML = core.pageSourceHtml(page.html);
+    rich.innerHTML = initialHtml;
     // Pressing Enter should start a normal paragraph (<p>), as the site's pages use, not a <div>.
     try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* an older browser keeps its own habit */ }
     const source = el('textarea', 'rich-source');
@@ -1605,9 +1565,67 @@
 
     const contentMessage = el('p', 'field-msg');
     contentWrap.append(contentLabel, toolbar, rich, source, contentMessage);
-    card.append(contentWrap);
 
-    const currentContent = () => (htmlMode ? source.value : rich.innerHTML);
+    return { node: contentWrap, rich, message: contentMessage, getHtml: () => (htmlMode ? source.value : rich.innerHTML) };
+  }
+
+  function buildPageEditor() {
+    const core = blogCore;
+    const blank = !pagesView.path;
+    const existing = blank ? null : currentPages().find((page) => pagePathOf(page) === pagesView.path);
+    if (!blank && !existing) {
+      pagesView.mode = 'list';
+      return buildPageList();
+    }
+    const page = existing || { title: '', path: '', description: '', image: '', html: '<p></p>' };
+    const livePath = blank ? '' : pagePathOf(page);
+    // Once a page is on the server its address is fixed. A page that only exists in this draft can still be renamed.
+    const published = Boolean(existing) && pagesBase.pages.some((entry) => pagePathOf(entry) === livePath);
+    const siteUrl = (state.seo.siteUrl || '').replace(/\/+$/, '');
+
+    const backToList = () => {
+      pagesView.mode = 'list';
+      renderEditor();
+    };
+    const back = el('button', 'btn btn-back', '← All pages');
+    back.type = 'button';
+    back.addEventListener('click', backToList);
+
+    const card = el('section', 'card');
+    card.append(el('h3', '', blank ? 'New page' : 'Edit page'));
+    const fields = el('div', 'fields');
+    const title = plainField({ label: 'Title', value: page.title });
+    const addressHelp = 'Letters, numbers and hyphens, for example my-new-page. Use games/my-game to put it under an existing page.';
+    const addressHint = (path) => (path ? `This page will be at ${siteUrl || ''}/${path}/` : addressHelp);
+    const address = plainField({
+      label: 'Address',
+      value: livePath,
+      readOnly: published,
+      hint: published ? 'The address of a published page cannot be changed, because visitors and Google already use it.' : addressHint(livePath),
+    });
+    const addressPreview = () => {
+      if (published) return;
+      address.hintEl.textContent = addressHint(core.normalizePagePath(address.input.value));
+    };
+    address.input.addEventListener('input', addressPreview);
+    const description = plainField({ label: 'Description for search engines', value: page.description || '', rows: 3, hint: 'Shown under the title in Google results. About 150 characters works best.' });
+    const count = el('p', 'field-hint');
+    const countDescription = () => {
+      const length = description.input.value.trim().length;
+      count.textContent = `${length} characters${length > 160 ? ' (Google may cut it short)' : ''}`;
+    };
+    description.input.addEventListener('input', countDescription);
+    countDescription();
+    description.wrap.insertBefore(count, description.wrap.querySelector('.field-msg'));
+    const image = plainField({ label: 'Share picture link (optional)', value: page.image || '', type: 'url', hint: 'The picture shown when the page is shared. Left empty, the first picture in the page is used.' });
+    fields.append(title.wrap, address.wrap, description.wrap, image.wrap);
+    card.append(fields);
+
+    const richEditor = buildRichEditor(core, core.pageSourceHtml(page.html));
+    const rich = richEditor.rich;
+    const contentMessage = richEditor.message;
+    const currentContent = richEditor.getHtml;
+    card.append(richEditor.node);
 
     // What the page would look like, built the same way as the real file.
     const previewFrame = el('iframe', 'page-preview');
@@ -1618,7 +1636,7 @@
       const first = html.match(/<img\b[^>]*\ssrc="([^"]*)"/i);
       const plain = core.stripTags(html.match(/<p>[\s\S]*?<\/p>/i)?.[0] || '');
       const now = new Date().toISOString();
-      const path = isNew ? core.normalizePagePath(address.input.value) : livePath;
+      const path = published ? livePath : core.normalizePagePath(address.input.value);
       return {
         ...page,
         slug: (path || 'new-page').split('/').pop(),
@@ -1648,9 +1666,9 @@
       let ok = true;
       const titleText = title.input.value.trim();
       ok = title.fail(titleText ? '' : 'Give the page a title.') && ok;
-      const path = isNew ? core.normalizePagePath(address.input.value) : livePath;
-      if (isNew) {
-        ok = address.fail(core.pageAddressProblem(path, { pages: currentPages(), postSlugs: pagesPostSlugs, reservedRoots: pagesPermalinks })) && ok;
+      const path = published ? livePath : core.normalizePagePath(address.input.value);
+      if (!published) {
+        ok = address.fail(core.pageAddressProblem(path, { pages: currentPages(), postSlugs: pagesPostSlugs, reservedRoots: pagesPermalinks, self: livePath })) && ok;
       }
       const descriptionText = description.input.value.trim();
       ok = description.fail(descriptionText.length > 320 ? 'Keep the description under 320 characters.' : '') && ok;
@@ -1670,6 +1688,7 @@
       draft.path = path;
       draft.slug = path.split('/').pop();
       draft.title = titleText;
+      if (!published && livePath && livePath !== path) delete pagesDraft.added[livePath]; // the address was changed
       const onSite = pagesBase.pages.some((entry) => pagePathOf(entry) === path);
       if (onSite) {
         pagesDraft.edited[path] = draft;
@@ -1682,7 +1701,7 @@
       notify(`Saved “${titleText}” in this browser. Download the pages when you are ready to publish.`);
       backToList();
     };
-    const saveButton = el('button', 'btn btn-primary', isNew ? 'Add page' : 'Save page');
+    const saveButton = el('button', 'btn btn-primary', blank ? 'Add page' : 'Save page');
     saveButton.type = 'button';
     saveButton.addEventListener('click', save);
 
@@ -1692,18 +1711,460 @@
     cancel.type = 'button';
     cancel.addEventListener('click', backToList);
     actions.append(cancel);
-    if (!isNew) {
+    if (!blank) {
       const remove = el('button', 'btn btn-danger', 'Delete page');
       remove.type = 'button';
       remove.addEventListener('click', () => {
-        if (!window.confirm(`Delete “${page.title}”? Its address /${livePath}/ will stop working once you publish.`)) return;
-        if (pagesBase.pages.some((entry) => pagePathOf(entry) === livePath)) {
+        if (!window.confirm(published ? `Delete “${page.title}”? Its address /${livePath}/ will stop working once you publish.` : `Delete “${page.title}”? It has not been published, so nothing else changes.`)) return;
+        if (published) {
           if (!pagesDraft.removed.includes(livePath)) pagesDraft.removed.push(livePath);
           delete pagesDraft.edited[livePath];
         } else {
           delete pagesDraft.added[livePath];
         }
         savePagesDraft();
+        backToList();
+      });
+      actions.append(remove);
+    }
+    card.append(actions, previewFrame);
+    return [back, card];
+  }
+
+  /* ---------- Posts ---------- */
+
+  // The blog posts are plain files built from blogs/posts.json. Like the pages, edits are kept in this browser as a
+  // draft, and "Download blog files" rebuilds the whole blog with the same code as tools/blog.mjs.
+
+  const POSTS_DRAFT_KEY = 'tps_posts_draft_v1';
+  let postsBase = null; // blogs/posts.json as it is on the server
+  let postsChrome = null; // the site header, footer and sidebar
+  let postsSkipRedirects = new Set(); // addresses that pages or home page sections own, never redirected to the blog
+  let postsError = '';
+  let postsLoading = false;
+  let postsDraft = { edited: {}, added: {}, removed: [] };
+  const postsView = { mode: 'list', slug: '', query: '' };
+
+  const postsChangeCount = () => Object.keys(postsDraft.edited).length + Object.keys(postsDraft.added).length + postsDraft.removed.length;
+
+  function savePostsDraft() {
+    if (postsChangeCount()) local.set(POSTS_DRAFT_KEY, JSON.stringify(postsDraft));
+    else local.remove(POSTS_DRAFT_KEY);
+    renderNav();
+  }
+
+  const newestFirst = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+
+  // The posts as the blog would have them with the draft applied.
+  function currentPosts() {
+    const removed = new Set(postsDraft.removed);
+    const kept = (postsBase ? postsBase.posts : [])
+      .filter((post) => !removed.has(post.slug))
+      .map((post) => postsDraft.edited[post.slug] || post);
+    return [...kept, ...Object.values(postsDraft.added)].sort(newestFirst);
+  }
+
+  const postStatus = (slug) => (postsDraft.added[slug] ? 'New' : postsDraft.edited[slug] ? 'Edited' : '');
+
+  const samePost = (a, b) => a.html === b.html && a.title === b.title && a.date === b.date && a.excerpt === b.excerpt
+    && a.category === b.category && a.author === b.author && (a.tags || []).join('|') === (b.tags || []).join('|')
+    && ((a.image && a.image.src) || '') === ((b.image && b.image.src) || '') && ((a.image && a.image.alt) || '') === ((b.image && b.image.alt) || '');
+
+  // After the files have been published, the draft is no longer needed: drop whatever the server already has.
+  function reconcilePostsDraft() {
+    const live = new Map(postsBase.posts.map((post) => [post.slug, post]));
+    let changed = false;
+    Object.entries(postsDraft.edited).forEach(([slug, post]) => {
+      const published = live.get(slug);
+      if (!published || samePost(published, post)) {
+        delete postsDraft.edited[slug];
+        changed = true;
+      }
+    });
+    Object.entries(postsDraft.added).forEach(([slug, post]) => {
+      const published = live.get(slug);
+      if (published && samePost(published, post)) {
+        delete postsDraft.added[slug];
+        changed = true;
+      }
+    });
+    const stillThere = postsDraft.removed.filter((slug) => live.has(slug));
+    if (stillThere.length !== postsDraft.removed.length) {
+      postsDraft.removed = stillThere;
+      changed = true;
+    }
+    if (changed) savePostsDraft();
+  }
+
+  async function loadPosts() {
+    if (postsBase || postsLoading) return;
+    postsLoading = true;
+    postsError = '';
+    try {
+      const [postsResponse, indexResponse, pagesResponse, core] = await Promise.all([
+        fetch('blogs/posts.json', { cache: 'no-store' }),
+        fetch('index.html', { cache: 'no-store' }),
+        fetch('pages.json', { cache: 'no-store' }).catch(() => null),
+        loadBlogCore(),
+      ]);
+      if (!postsResponse.ok) throw new Error('Could not read blogs/posts.json. Import your posts first (see tools/README.md).');
+      if (!indexResponse.ok) throw new Error('Could not read index.html to copy the site header and footer.');
+      const loaded = await postsResponse.json();
+      const indexHtml = await indexResponse.text();
+      postsChrome = core.extractChrome(indexHtml);
+      const owned = new Set(core.permalinkIds(indexHtml));
+      if (pagesResponse && pagesResponse.ok) (await pagesResponse.json()).pages.forEach((page) => owned.add(page.path ?? page.slug));
+      postsSkipRedirects = owned;
+      postsBase = loaded;
+      postsDraft = readDraftFrom(POSTS_DRAFT_KEY);
+      reconcilePostsDraft();
+    } catch (error) {
+      postsBase = null;
+      postsError = error.message || 'Could not load the posts.';
+    } finally {
+      postsLoading = false;
+      if (activeSection === 'posts') renderEditor();
+    }
+  }
+
+  function buildPosts() {
+    if (!postsBase) {
+      const card = el('section', 'card');
+      if (postsError) {
+        card.append(el('h3', '', 'The posts could not be loaded'), el('p', 'card-note', postsError));
+        const retry = el('button', 'btn', 'Try again');
+        retry.type = 'button';
+        retry.addEventListener('click', () => {
+          postsError = '';
+          renderEditor();
+        });
+        card.append(retry);
+      } else {
+        card.append(el('p', 'blog-line', 'Loading your posts…'));
+        loadPosts();
+      }
+      return [card];
+    }
+    return postsView.mode === 'edit' ? buildPostEditor() : buildPostList();
+  }
+
+  async function downloadPosts() {
+    try {
+      const core = await loadBlogCore();
+      const files = core.buildBlogFiles(currentPosts(), {
+        settings: state.blog,
+        siteUrl: state.seo.siteUrl,
+        chrome: postsChrome,
+        meta: { source: postsBase.source, origin: postsBase.origin, importedAt: postsBase.importedAt },
+        skipRedirects: postsSkipRedirects,
+      });
+      if (postsDraft.removed.length) {
+        files.push({
+          path: 'REMOVED-POSTS.txt',
+          content: `Delete these files from your site folder and from the server (a zip cannot delete files):\n${postsDraft.removed.map((slug) => `  blogs/${slug}/index.html`).join('\n')}\n`,
+        });
+      }
+      const url = URL.createObjectURL(core.makeZip(files));
+      const link = el('a');
+      link.href = url;
+      link.download = 'blog-files.zip';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+      notify(`Downloaded ${files.length} files. Unzip them into your site folder, replacing the blogs folder files.${postsDraft.removed.length ? ' Also delete the removed posts listed in REMOVED-POSTS.txt.' : ''}`);
+    } catch (error) {
+      notify(error.message);
+    }
+  }
+
+  function buildPostList() {
+    const core = blogCore;
+    const nodes = [];
+    const posts = currentPosts();
+    const changes = postsChangeCount();
+
+    if (changes) {
+      const draftCard = el('section', 'card');
+      const parts = [];
+      const edited = Object.keys(postsDraft.edited).length;
+      const added = Object.keys(postsDraft.added).length;
+      if (edited) parts.push(`${edited} edited`);
+      if (added) parts.push(`${added} new`);
+      if (postsDraft.removed.length) parts.push(`${postsDraft.removed.length} removed`);
+      draftCard.append(el('h3', '', 'Unpublished post changes'));
+      draftCard.append(el('p', 'card-note', `${parts.join(', ')}, kept in this browser. Download the blog files, unzip them into your site folder, then push to GitHub and pull on the server.`));
+      const row = el('div', 'row');
+      const download = el('button', 'btn btn-primary', 'Download blog files (.zip)');
+      download.type = 'button';
+      download.addEventListener('click', downloadPosts);
+      const discard = el('button', 'btn btn-danger', 'Discard post changes');
+      discard.type = 'button';
+      discard.addEventListener('click', () => {
+        if (!window.confirm('Throw away every unpublished post change in this browser?')) return;
+        postsDraft = { edited: {}, added: {}, removed: [] };
+        savePostsDraft();
+        renderEditor();
+      });
+      row.append(download, discard);
+      draftCard.append(row);
+      if (postsDraft.removed.length) {
+        const note = el('div', 'card-note');
+        note.append('Removed posts (their files must also be deleted by hand, because a zip cannot delete files):');
+        const list = el('ul', 'removed-list');
+        postsDraft.removed.forEach((slug) => {
+          const item = el('li');
+          const undo = el('button', 'btn btn-small', 'Undo');
+          undo.type = 'button';
+          undo.addEventListener('click', () => {
+            postsDraft.removed = postsDraft.removed.filter((entry) => entry !== slug);
+            savePostsDraft();
+            renderEditor();
+          });
+          item.append(el('code', '', `/blogs/${slug}/`), ' ', undo);
+          list.append(item);
+        });
+        note.append(list);
+        draftCard.append(note);
+      }
+      nodes.push(draftCard);
+    }
+
+    const card = el('section', 'card');
+    const head = el('div', 'pages-head');
+    head.append(el('h3', '', `Your posts (${posts.length})`));
+    const add = el('button', 'btn btn-primary', '+ Add post');
+    add.type = 'button';
+    add.addEventListener('click', () => {
+      postsView.mode = 'edit';
+      postsView.slug = '';
+      renderEditor();
+    });
+    head.append(add);
+
+    const search = el('input', 'pages-search');
+    search.type = 'search';
+    search.placeholder = 'Search by title, address, category or tag';
+    search.setAttribute('aria-label', 'Search posts');
+    search.value = postsView.query;
+    const list = el('div', 'pages-list');
+    const count = el('p', 'blog-line');
+    const paint = () => {
+      const words = postsView.query.toLowerCase().split(/\s+/).filter(Boolean);
+      const shown = posts.filter((post) => {
+        const haystack = `${post.title} ${post.slug} ${post.category || ''} ${(post.tags || []).join(' ')}`.toLowerCase();
+        return words.every((word) => haystack.includes(word));
+      });
+      count.textContent = words.length ? `${shown.length} of ${posts.length} posts match.` : '';
+      count.hidden = !words.length;
+      if (!shown.length) {
+        list.replaceChildren(el('p', 'empty', 'No post matches that search.'));
+        return;
+      }
+      list.replaceChildren(...shown.map((post) => {
+        const status = postStatus(post.slug);
+        const row = el('div', 'page-row');
+        const info = el('div', 'page-info');
+        const title = el('strong', '', post.title);
+        if (status) title.append(' ', el('span', `badge badge-${status.toLowerCase()}`, status));
+        info.append(title, el('span', 'page-meta', `${core.formatDate(post.date)} · ${post.category || 'Blog'}`), el('code', '', `/blogs/${post.slug}/`));
+        const actions = el('div', 'page-actions');
+        const edit = el('button', 'btn', 'Edit');
+        edit.type = 'button';
+        edit.setAttribute('aria-label', `Edit ${post.title}`);
+        edit.addEventListener('click', () => {
+          postsView.mode = 'edit';
+          postsView.slug = post.slug;
+          renderEditor();
+        });
+        actions.append(edit);
+        if (status === 'New') {
+          actions.append(el('span', 'page-note', 'Not published yet'));
+        } else {
+          const view = el('a', 'btn', 'View');
+          view.href = `/blogs/${post.slug}/`;
+          view.target = '_blank';
+          view.rel = 'noopener';
+          view.setAttribute('aria-label', `View ${post.title} on the site`);
+          actions.append(view);
+        }
+        row.append(info, actions);
+        return row;
+      }));
+    };
+    search.addEventListener('input', () => {
+      postsView.query = search.value;
+      paint();
+    });
+    paint();
+    card.append(head, search, count, list);
+    nodes.push(card);
+    return nodes;
+  }
+
+  function buildPostEditor() {
+    const core = blogCore;
+    const blank = !postsView.slug;
+    const existing = blank ? null : currentPosts().find((post) => post.slug === postsView.slug);
+    if (!blank && !existing) {
+      postsView.mode = 'list';
+      return buildPostList();
+    }
+    // Once a post is on the server its address is fixed. A post that only exists in this draft can still be renamed.
+    const published = Boolean(existing) && postsBase.posts.some((entry) => entry.slug === existing.slug);
+    const today = new Date().toISOString().slice(0, 10);
+    const post = existing || { title: '', slug: '', date: `${today}T12:00:00`, excerpt: '', html: '<p></p>', image: null, category: 'Blog', tags: [], author: '' };
+    const siteUrl = (state.seo.siteUrl || '').replace(/\/+$/, '');
+
+    const backToList = () => {
+      postsView.mode = 'list';
+      renderEditor();
+    };
+    const back = el('button', 'btn btn-back', '← All posts');
+    back.type = 'button';
+    back.addEventListener('click', backToList);
+
+    const card = el('section', 'card');
+    card.append(el('h3', '', blank ? 'New post' : 'Edit post'));
+    const fields = el('div', 'fields');
+    const title = plainField({ label: 'Title', value: post.title });
+    const addressHelp = 'Letters, numbers and hyphens, for example my-new-post.';
+    const addressHint = (slug) => (slug ? `This post will be at ${siteUrl}/blogs/${slug}/` : addressHelp);
+    const address = plainField({
+      label: 'Address',
+      value: post.slug,
+      readOnly: published,
+      hint: published ? 'The address of a published post cannot be changed, because visitors and Google already use it.' : addressHint(post.slug),
+    });
+    address.input.addEventListener('input', () => {
+      if (published) return;
+      address.hintEl.textContent = addressHint(core.normalizePostSlug(address.input.value));
+    });
+    const date = plainField({ label: 'Date', value: post.date.slice(0, 10), type: 'date', hint: 'Newer posts are shown first on the blog.' });
+    const author = plainField({ label: 'Author (optional)', value: post.author || '', hint: `Left empty, the blog's author name is used${state.blog.author ? ` (${state.blog.author})` : ''}.` });
+    const category = plainField({ label: 'Category', value: post.category || '' });
+    const datalist = el('datalist');
+    datalist.id = `categories-${category.input.id}`;
+    [...new Set(currentPosts().map((entry) => entry.category).filter(Boolean))].sort().forEach((name) => {
+      const option = el('option');
+      option.value = name;
+      datalist.append(option);
+    });
+    category.input.setAttribute('list', datalist.id);
+    category.wrap.append(datalist);
+    const tags = plainField({ label: 'Tags', value: (post.tags || []).join(', '), hint: 'Separate tags with commas.' });
+    const excerpt = plainField({ label: 'Summary for the blog list', value: post.excerpt || '', rows: 3, hint: 'Left empty, the start of the post is used.' });
+    const image = plainField({ label: 'Main picture link (optional)', value: (post.image && post.image.src) || '', type: 'url', hint: 'Shown on the blog list and when the post is shared. Left empty, the first picture in the post is used.' });
+    const alt = plainField({ label: 'Main picture description', value: (post.image && post.image.alt) || '', hint: 'Describes the picture for people who cannot see it.' });
+    [date, author, category, tags].forEach((field) => field.wrap.classList.remove('wide'));
+    fields.append(title.wrap, address.wrap, date.wrap, author.wrap, category.wrap, tags.wrap, excerpt.wrap, image.wrap, alt.wrap);
+    card.append(fields);
+
+    const richEditor = buildRichEditor(core, core.pageSourceHtml(post.html));
+    const rich = richEditor.rich;
+    const contentMessage = richEditor.message;
+    card.append(richEditor.node);
+
+    // The post exactly as the form describes it right now.
+    const draftOf = () => {
+      const html = core.cleanPostHtml(richEditor.getHtml());
+      const firstImage = html.match(/<img\b[^>]*>/i)?.[0] || '';
+      const firstSrc = firstImage.match(/\ssrc="([^"]*)"/)?.[1];
+      const firstAlt = firstImage.match(/\salt="([^"]*)"/)?.[1] || '';
+      const slug = published ? post.slug : core.normalizePostSlug(address.input.value);
+      const day = date.input.value || post.date.slice(0, 10);
+      const time = post.date.slice(0, 10) === day ? post.date.slice(10) : 'T12:00:00';
+      const picture = image.input.value.trim();
+      return {
+        ...post,
+        slug: slug || 'new-post-preview',
+        originalSlug: post.originalSlug || '',
+        title: title.input.value.trim() || 'Untitled post',
+        date: `${day}${time || 'T12:00:00'}`,
+        modified: new Date().toISOString(),
+        excerpt: excerpt.input.value.trim() || core.excerptFrom(html),
+        html,
+        image: picture ? { src: picture, alt: alt.input.value.trim() } : firstSrc ? { src: core.decodeEntities(firstSrc), alt: core.decodeEntities(firstAlt) } : null,
+        category: category.input.value.trim() || 'Blog',
+        tags: [...new Set(tags.input.value.split(',').map((tag) => tag.trim()).filter(Boolean))],
+        author: author.input.value.trim(),
+      };
+    };
+
+    const previewFrame = el('iframe', 'page-preview');
+    previewFrame.title = 'Preview of the post';
+    previewFrame.hidden = true;
+    const previewButton = el('button', 'btn', 'Preview post');
+    previewButton.type = 'button';
+    previewButton.setAttribute('aria-pressed', 'false');
+    previewButton.addEventListener('click', () => {
+      const show = previewFrame.hidden;
+      previewButton.setAttribute('aria-pressed', String(show));
+      previewFrame.hidden = !show;
+      if (!show) return;
+      const draft = draftOf();
+      const all = [...currentPosts().filter((entry) => entry.slug !== draft.slug && entry.slug !== post.slug), draft].sort(newestFirst);
+      const built = core.buildBlogFiles(all, { settings: state.blog, siteUrl: state.seo.siteUrl, chrome: postsChrome, skipRedirects: postsSkipRedirects })
+        .find((file) => file.path === `blogs/${draft.slug}/index.html`);
+      previewFrame.srcdoc = built.content.replace('<head>', '<head>\n    <base target="_blank" />');
+    });
+
+    const save = () => {
+      let ok = true;
+      const titleText = title.input.value.trim();
+      ok = title.fail(titleText ? '' : 'Give the post a title.') && ok;
+      const slug = published ? post.slug : core.normalizePostSlug(address.input.value);
+      if (!published) ok = address.fail(core.postSlugProblem(slug, { posts: currentPosts(), self: post.slug })) && ok;
+      ok = date.fail(/^\d{4}-\d{2}-\d{2}$/.test(date.input.value) ? '' : 'Choose a date.') && ok;
+      ok = excerpt.fail(excerpt.input.value.trim().length > 300 ? 'Keep the summary under 300 characters.' : '') && ok;
+      const picture = image.input.value.trim();
+      ok = image.fail(picture && !safeUrl(picture) ? 'Use a link that starts with https:// (or a path on this site).' : '') && ok;
+      const html = core.cleanPostHtml(richEditor.getHtml());
+      const hasContent = core.stripTags(html) || /<img\b/i.test(html);
+      contentMessage.textContent = hasContent ? '' : 'The post has no content yet.';
+      ok = Boolean(hasContent) && ok;
+      if (!ok) {
+        (card.querySelector('.invalid') || rich).focus();
+        return;
+      }
+      const draft = draftOf();
+      draft.slug = slug;
+      draft.title = titleText;
+      if (!published && post.slug && post.slug !== slug) delete postsDraft.added[post.slug]; // the address was changed
+      const onSite = postsBase.posts.some((entry) => entry.slug === slug);
+      if (onSite) {
+        postsDraft.edited[slug] = draft;
+        delete postsDraft.added[slug];
+        postsDraft.removed = postsDraft.removed.filter((entry) => entry !== slug);
+      } else {
+        postsDraft.added[slug] = draft;
+      }
+      savePostsDraft();
+      notify(`Saved “${titleText}” in this browser. Download the blog files when you are ready to publish.`);
+      backToList();
+    };
+    const saveButton = el('button', 'btn btn-primary', blank ? 'Add post' : 'Save post');
+    saveButton.type = 'button';
+    saveButton.addEventListener('click', save);
+
+    const actions = el('div', 'row');
+    actions.append(saveButton, previewButton);
+    const cancel = el('button', 'btn', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', backToList);
+    actions.append(cancel);
+    if (!blank) {
+      const remove = el('button', 'btn btn-danger', 'Delete post');
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        if (!window.confirm(published ? `Delete “${post.title}”? Its address /blogs/${post.slug}/ will stop working once you publish.` : `Delete “${post.title}”? It has not been published, so nothing else changes.`)) return;
+        if (published) {
+          if (!postsDraft.removed.includes(post.slug)) postsDraft.removed.push(post.slug);
+          delete postsDraft.edited[post.slug];
+        } else {
+          delete postsDraft.added[post.slug];
+        }
+        savePostsDraft();
         backToList();
       });
       actions.append(remove);
@@ -1720,7 +2181,7 @@
   function renderNav() {
     sidenav.replaceChildren(
       ...SECTIONS.map((section) => {
-        const waiting = section.id === 'pages' ? pagesChangeCount() : 0;
+        const waiting = section.id === 'pages' ? pagesChangeCount() : section.id === 'posts' ? postsChangeCount() : 0;
         const button = el('button', 'nav-item', waiting ? `${section.label} (${waiting})` : section.label);
         button.type = 'button';
         if (section.id === activeSection) button.setAttribute('aria-current', 'page');
@@ -1744,9 +2205,11 @@
 
     const blocks = section.custom === 'pages'
       ? buildPages()
-      : section.custom
-        ? buildPublish()
-        : section.blocks.map((block) => (block.list ? buildListBlock(block) : buildFieldsBlock(block)));
+      : section.custom === 'posts'
+        ? buildPosts()
+        : section.custom
+          ? buildPublish()
+          : section.blocks.map((block) => (block.list ? buildListBlock(block) : buildFieldsBlock(block)));
     if (section.after === 'blog') blocks.push(...buildBlog());
     editor.replaceChildren(head, ...blocks);
 
@@ -1808,6 +2271,7 @@
     app.hidden = false;
     state = window.SiteContent.load();
     pagesDraft = readPagesDraft();
+    postsDraft = readDraftFrom(POSTS_DRAFT_KEY);
     if (!isDirty()) local.remove(DRAFT_KEY);
     setStatus(isDirty(), true);
 

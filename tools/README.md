@@ -29,12 +29,41 @@ blogs/<post-name>/index.html  one page per post
 blogs/search.json             powers the search box
 blogs/sitemap.xml             submit this to Google Search Console
 blogs/redirects.txt           old WordPress address -> new address (301), for your server
-blogs/redirects.nginx.conf    the same redirects as one include file for nginx (aaPanel)
+blogs/redirects.nginx.conf    the same redirects as one include file for nginx (aaPanel), plus the cache rule below
 blogs/posts.json              the cleaned posts, so pages can be rebuilt later
 ```
 
 Re-importing replaces the generated pages and removes pages for posts that no longer exist.
 Downloaded images in `blogs/media` are kept.
+
+**Updates that appear by themselves.** aaPanel tells browsers to keep `.js`, `.css` and `.json` files for 12 hours,
+and Cloudflare keeps its own copy for as long, so a changed script or stylesheet could stay hidden until someone
+purged the cache. `redirects.nginx.conf` therefore also holds one rule that makes those files revalidate on every
+visit (a quick `304 Not Modified` when nothing changed; pictures stay cached). The rule only takes effect once nginx
+re-reads the file: after pulling an updated `redirects.nginx.conf`, press **Save** in the aaPanel URL rewrite tab (wait until
+the include line has loaded in the editor first) or reload nginx. Check it with `curl -I https://your-site/script.js`:
+the answer should say `Cache-Control: no-cache`.
+
+### Writing and editing posts in the admin
+
+The **Posts** section of the admin lists every post (newest first, searchable by title, address, category or
+tag). **+ Add post** opens a blank editor; **Edit** opens an existing post. A post has a title, an address,
+a date, an author (empty uses the blog's byline), a category, tags, a summary for the blog list (empty uses
+the start of the post), a main picture, and the text, written with a toolbar or in an HTML view. **Preview
+post** shows it with the site's header, footer and sidebar exactly as visitors will see it.
+
+Edits wait in the browser as a draft. **Download blog files (.zip)** rebuilds the whole blog with the same
+code as `node tools/blog.mjs build`, so posts you did not touch come out byte for byte the same. Unzip it into the
+site folder, push to GitHub and pull on the server. Things to know:
+
+- The address of a post that is already on the site cannot change (visitors and Google use it). A post that is
+  still only in your draft can be renamed. An address cannot be `page` or `media`, or one a post already has.
+- A new post is also added to the blog list, the search box, the sitemap and the recent-posts sidebar. Adding a
+  post that is newer than the others changes the recent-posts list, so most post files are rewritten. That is expected.
+- A zip cannot delete files, so for deleted posts it also lists the files to remove (`REMOVED-POSTS.txt`).
+- New posts get no old-address redirect, because WordPress never knew them.
+- A draft that the server already has (after you publish) disappears by itself.
+- `blogs/posts.json` stays the source of truth: the admin reads it and the zip writes it back.
 
 ## Pages
 

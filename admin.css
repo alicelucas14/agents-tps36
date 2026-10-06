@@ -900,3 +900,8 @@ textarea {
     margin-left: 0;
   }
 }
+
+.page-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
