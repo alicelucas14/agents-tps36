@@ -71,6 +71,24 @@ function metaDescription(text, max = 155) {
   return `${window.replace(/[\s,;:–—-]*\S*$/, '').replace(/[\s,;:–—-]+$/, '')}…`;
 }
 
+/**
+ * The text a search description should be made from: the first real paragraphs of a page, without the table of
+ * contents and without a paragraph that only repeats the title. (WordPress's own excerpt starts with the title and
+ * the first heading, so descriptions built from it read as "Title Heading Text ...".)
+ */
+export function descriptionSource(html, title = '') {
+  const body = String(html).replace(/<details class="toc"[\s\S]*?<\/details>/i, '');
+  const own = String(title).replace(/\s+/g, ' ').trim().toLowerCase();
+  return [...body.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    // Links and emphasis end up inside a sentence, so they must not leave a space before the comma that follows them.
+    .map((match) => stripTags(match[1].replace(/<\/?(?:a|strong|b|em|i|u|mark|span|small|sup|sub|code)\b[^>]*>/gi, '')))
+    .filter((text) => text.length >= 40 && text.toLowerCase() !== own)
+    .join(' ');
+}
+
+// Addresses in meta tags and structured data are plain ASCII, so scrapers that do not expect "·" or "é" still find the picture.
+const asciiUrl = (url) => String(url || '').replace(/[^\x21-\x7e]/g, (character) => encodeURIComponent(character));
+
 // The site's own pictures, used when a page has none of its own.
 const SHARE_IMAGE_PATH = '/og-default.jpg';
 const LOGO_PATH = '/apple-touch-icon.png';
@@ -111,12 +129,24 @@ export function outlineHeadings(html) {
   });
 }
 
-/** Pictures after the first load only when they get near the screen, which keeps the top of the page fast. */
+/**
+ * Pictures after the first load only when they get near the screen, which keeps the top of the page fast.
+ * The first one is fetched ahead of everything else, unless a table of contents comes before it (it is then below the fold).
+ */
 export function lazyImages(html) {
+  const text = String(html);
+  const firstAt = text.search(/<img\b/i);
+  const onTop = firstAt >= 0 && !/<details class="toc"/i.test(text.slice(0, firstAt));
   let seen = 0;
-  return String(html).replace(/<img\b[^>]*>/gi, (tag) => {
+  return text.replace(/<img\b[^>]*>/gi, (tag) => {
     seen += 1;
-    if (seen === 1 || /\sloading\s*=/i.test(tag)) return tag;
+    if (seen === 1) {
+      if (!onTop) return tag;
+      const eager = tag.replace(/\sloading="lazy"/i, '');
+      if (/\sfetchpriority\s*=/i.test(eager)) return eager;
+      return eager.replace(/\s*\/?>$/, (end) => ` fetchpriority="high"${end}`);
+    }
+    if (/\sloading\s*=/i.test(tag)) return tag;
     return tag.replace(/\s*\/?>$/, (end) => ` loading="lazy" decoding="async"${end}`);
   });
 }
@@ -544,7 +574,7 @@ export function permalinkIds(indexHtml) {
     .filter(Boolean);
 }
 
-/** Pulls the header, footer and font link out of index.html, so blog pages always match the site. */
+/** Pulls the header, footer and font preloads out of index.html, so blog pages always match the site. */
 export function extractChrome(indexHtml) {
   const block = (tag, cls) => {
     const start = indexHtml.search(new RegExp(`<${tag}\\s+class="${cls}"`));
@@ -552,7 +582,8 @@ export function extractChrome(indexHtml) {
     if (start < 0 || end < 0) throw new Error(`Could not find the site ${cls} in index.html.`);
     return indexHtml.slice(start, end + tag.length + 3);
   };
-  const fonts = indexHtml.match(/<link[^>]+fonts\.googleapis\.com\/css2[^>]*>/);
+  // Fonts are served from /fonts; index.html preloads the one the first paint needs.
+  const fonts = indexHtml.match(/<link[^>]+rel="preload"[^>]+as="font"[^>]*>/g);
   // The floating social icons are optional: an index.html without them just gives blog pages none.
   const sidebarStart = indexHtml.search(/<nav\s+class="social-bar"/);
   const sidebarEnd = sidebarStart < 0 ? -1 : indexHtml.indexOf('</nav>', sidebarStart);
@@ -563,7 +594,7 @@ export function extractChrome(indexHtml) {
     header: block('header', 'site-header').replace(/href="#([^"]*)"/g, (m, hash) => `href="/${hash ? `#${hash}` : ''}"`),
     footer,
     sidebar: sidebarEnd < 0 ? '' : indexHtml.slice(sidebarStart, sidebarEnd + '</nav>'.length),
-    fonts: fonts ? fonts[0] : '',
+    fonts: fonts ? fonts.join('\n    ') : '',
     // The site's own profiles, which tell search engines and AI assistants that these accounts belong to the same brand.
     social: [...socialNav.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((match) => decodeEntities(match[1])),
   };
@@ -574,7 +605,7 @@ const jsonForScript = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
 function pageShell({ title, description, canonical, image, type = 'website', graph = [], chrome, body, site = '', siteName = '', noindex = false, published = '', modified = '' }) {
   // Pages without a picture of their own still get a branded one when shared.
   const usingDefaultImage = !image && Boolean(site);
-  const shareImage = image || (site ? `${site}${SHARE_IMAGE_PATH}` : '');
+  const shareImage = asciiUrl(image) || (site ? `${site}${SHARE_IMAGE_PATH}` : '');
   const schema = graph.length ? { '@context': 'https://schema.org', '@graph': graph } : null;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -603,8 +634,6 @@ function pageShell({ title, description, canonical, image, type = 'website', gra
     <meta name="twitter:title" content="${escapeHtml(title)}" />
     <meta name="twitter:description" content="${escapeHtml(description)}" />
     ${shareImage ? `<meta name="twitter:image" content="${escapeHtml(shareImage)}" />` : ''}
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     ${chrome.fonts}
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/blog.css" />
@@ -635,9 +664,11 @@ const searchForm = (idSuffix) => `<form class="blog-search" role="search" action
         <button type="submit">Search</button>
       </form>`;
 
-function card(post) {
+// The first card of a list is the likely largest paint, so it is fetched at once; the rest wait until they are near the screen.
+function card(post, first = false) {
+  const loading = first ? 'fetchpriority="high" decoding="async"' : 'loading="lazy" decoding="async"';
   const image = post.image
-    ? `<a class="blog-card-image" href="${postUrl(post)}" tabindex="-1" aria-hidden="true"><img src="${escapeHtml(post.image.src)}" alt="" loading="lazy" decoding="async" /></a>`
+    ? `<a class="blog-card-image" href="${postUrl(post)}" tabindex="-1" aria-hidden="true"><img src="${escapeHtml(post.image.src)}" alt="" ${loading} /></a>`
     : `<a class="blog-card-image blog-card-image--empty" href="${postUrl(post)}" tabindex="-1" aria-hidden="true"></a>`;
   return `<article class="blog-card">
         ${image}
@@ -695,7 +726,7 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
       </div>
       <p class="blog-status" id="blog-status" role="status" hidden></p>
       <div class="blog-grid" id="blog-grid">
-      ${slice.map(card).join('\n      ')}
+      ${slice.map((post, index) => card(post, index === 0)).join('\n      ')}
       </div>
       <div id="blog-pagination">${pagination(page, pages)}</div>
     </main>`;
@@ -758,8 +789,8 @@ ${lazyImages(outlineHeadings(post.html))}
         </aside>
       </div>
     </main>`;
-    const description = metaDescription(post.excerpt || stripTags(post.html));
-    const image = post.image && /^https?:/i.test(post.image.src) ? post.image.src : post.image && site ? `${site}${post.image.src}` : '';
+    const description = metaDescription(descriptionSource(post.html, post.title) || post.excerpt || stripTags(post.html));
+    const image = asciiUrl(post.image && /^https?:/i.test(post.image.src) ? post.image.src : post.image && site ? `${site}${post.image.src}` : '');
     files.push({
       path: `${POSTS_DIR}/${post.slug}/index.html`,
       content: pageShell({
@@ -857,6 +888,8 @@ ${lazyImages(outlineHeadings(post.html))}
       '# Scripts, styles and data files are checked for a newer copy on every visit (a quick 304 when nothing changed).',
       '# aaPanel keeps them for 12 hours by default, and Cloudflare keeps its own copy for as long, so edits would not show up.',
       'location ~* "\\.(?:js|mjs|css|json)$" { expires -1; }',
+      '# A picture or font is not replaced under the same name, so browsers may keep it for a year (aaPanel only does this for png, jpg and gif, not webp).',
+      'location ~* "\\.(?:webp|avif|svg|woff2?)$" { expires 1y; }',
       ...groups.map((names) => `location ~ "^/(${names.join('|')})/?$" { return 301 /${POSTS_DIR}/$1/; }`),
       ...renamed.map((p) => `location = /${p.originalSlug}/ { return 301 ${postUrl(p)}; }`),
       '# WordPress listed every post under this category page',
@@ -869,7 +902,7 @@ ${lazyImages(outlineHeadings(post.html))}
 /* ---------- plain pages: WordPress "pages" kept at their old addresses (/big-agent-india/, /teen-patti-games/trx-win-go/ ...) ---------- */
 
 // First folder names this site already uses, so an imported page cannot take them over.
-const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'admin', 'index']);
+const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'admin', 'index', 'site-map', 'fonts']);
 
 const metaContent = (head, attribute, value) => {
   const tag = head.match(new RegExp(`<meta\\b[^>]*\\b${attribute}=["']${value}["'][^>]*>`, 'i'));
@@ -1078,6 +1111,12 @@ export function buildSitePages(rawPages, { siteUrl = '', chrome, siteName = 'Tee
   const titleByPath = new Map(pages.map((page) => [page.path, page.title]));
   const files = [];
 
+  // A page that other pages live under (/teen-patti-games/ and /teen-patti-games/trx-win-go/) links to each of them,
+  // so none of them is reachable only from the sitemap.
+  const parentOf = (path) => path.split('/').slice(0, -1).join('/');
+  const byTitle = (a, b) => a.title.localeCompare(b.title);
+  const childrenOf = (path) => pages.filter((other) => parentOf(other.path) === path).sort(byTitle);
+
   for (const page of pages) {
     const url = abs(`/${page.path}/`);
     // Home › each parent page that exists on this site › this page
@@ -1088,16 +1127,26 @@ export function buildSitePages(rawPages, { siteUrl = '', chrome, siteName = 'Tee
       .filter((path) => titleByPath.has(path))
       .map((path) => `<a href="/${path}/">${escapeHtml(clip(titleByPath.get(path), 40))}</a><span aria-hidden="true">›</span>`)
       .join('');
+    const children = childrenOf(page.path);
+    const more = children.length
+      ? `
+        <section class="page-children" aria-labelledby="page-children-title">
+          <h2 id="page-children-title">More in ${escapeHtml(clip(page.title, 50))}</h2>
+          <ul>
+            ${children.map((child) => `<li><a href="/${child.path}/">${escapeHtml(clip(child.title, 90))}</a></li>`).join('\n            ')}
+          </ul>
+        </section>`
+      : '';
     const body = `    <main class="blog-main">
       <article class="post page-article">
         <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">›</span>${parents}<span aria-current="page">${escapeHtml(clip(page.title, 60))}</span></nav>
         <h1 class="post-title">${escapeHtml(page.title)}</h1>
         <div class="post-content">
 ${lazyImages(outlineHeadings(page.html))}
-        </div>
+        </div>${more}
       </article>
     </main>`;
-    const description = metaDescription(page.description || stripTags(page.html));
+    const description = metaDescription(page.description || descriptionSource(page.html, page.title) || stripTags(page.html));
     const crumbs = [
       { name: 'Home', url: `${site}/` },
       ...parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/')).filter((path) => titleByPath.has(path)).map((path) => ({ name: clip(titleByPath.get(path), 40), url: abs(`/${path}/`) })),
@@ -1109,7 +1158,7 @@ ${lazyImages(outlineHeadings(page.html))}
         title: seoTitle(page.title, siteName),
         description,
         canonical: url,
-        image: /^https?:/i.test(page.image) ? page.image : page.image && site ? `${site}${page.image}` : '',
+        image: asciiUrl(/^https?:/i.test(page.image) ? page.image : page.image && site ? `${site}${page.image}` : ''),
         site, siteName,
         graph: site ? [
           ...siteNodes({ site, siteName, social: chrome.social }),
@@ -1129,6 +1178,46 @@ ${lazyImages(outlineHeadings(page.html))}
       }),
     });
   }
+
+  // A site map for visitors and crawlers: every page, grouped under the page it lives beneath, one link from the footer.
+  const tree = (path) => {
+    const items = childrenOf(path);
+    return items.length ? `<ul>${items.map((item) => `<li><a href="/${item.path}/">${escapeHtml(clip(item.title, 90))}</a>${tree(item.path)}</li>`).join('')}</ul>` : '';
+  };
+  const topLevel = pages.filter((page) => !titleByPath.has(parentOf(page.path))).sort(byTitle);
+  const menu = [...String(chrome.header).matchAll(/<a href="(\/[^"]*)"[^>]*>([^<]+)<\/a>/g)].map((match) => ({ href: match[1], label: decodeEntities(match[2]).trim() }));
+  const mapUrl = abs('/site-map/');
+  files.push({
+    path: 'site-map/index.html',
+    content: pageShell({
+      title: seoTitle('Site map', siteName),
+      description: `Every page on ${siteName} in one list: the agent programme, game guides, app pages and the blog.`,
+      canonical: mapUrl,
+      site, siteName,
+      graph: site ? [
+        ...siteNodes({ site, siteName, social: chrome.social }),
+        { '@type': 'WebPage', '@id': mapUrl, url: mapUrl, name: 'Site map', isPartOf: { '@id': `${site}/#website` }, inLanguage: 'en' },
+        breadcrumbNode([{ name: 'Home', url: `${site}/` }, { name: 'Site map', url: mapUrl }]),
+      ] : [],
+      chrome,
+      body: `    <main class="blog-main">
+      <article class="post page-article">
+        <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">›</span><span aria-current="page">Site map</span></nav>
+        <h1 class="post-title">Site map</h1>
+        <div class="post-content">
+          <h2>Start here</h2>
+          <ul>
+            <li><a href="/">${escapeHtml(siteName)} home page</a></li>
+            ${menu.map((item) => `<li><a href="${escapeHtml(item.href)}">${escapeHtml(item.label)}</a></li>`).join('\n            ')}
+            <li><a href="/${POSTS_DIR}/">Blog: all articles</a></li>
+          </ul>
+          <h2>All pages</h2>
+          <ul>${topLevel.map((page) => `<li><a href="/${page.path}/">${escapeHtml(clip(page.title, 90))}</a>${tree(page.path)}</li>`).join('')}</ul>
+        </div>
+      </article>
+    </main>`,
+    }),
+  });
 
   // A page for addresses that do not exist. The server has to be told to use it (see tools/README.md).
   files.push({
@@ -1161,7 +1250,7 @@ ${lazyImages(outlineHeadings(page.html))}
     content: JSON.stringify({ importedAt: meta.importedAt || new Date().toISOString(), source: meta.source || '', origin: meta.origin || '', pages }),
   });
   if (site) {
-    const urls = [{ loc: `${site}/` }, ...pages.map((page) => ({ loc: abs(`/${page.path}/`), lastmod: (page.modified || page.date).slice(0, 10) }))];
+    const urls = [{ loc: `${site}/` }, ...pages.map((page) => ({ loc: abs(`/${page.path}/`), lastmod: (page.modified || page.date).slice(0, 10) })), { loc: mapUrl }];
     files.push({
       path: 'sitemap-pages.xml',
       content: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls

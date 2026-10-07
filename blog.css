@@ -8,7 +8,7 @@
   --blog-muted: #6b6b6b;
   --blog-line: #e6e6e6;
   --blog-accent: #571037;
-  --blog-link: #12a1bf;
+  --blog-link: #0a7690; /* #12a1bf was only 2.9:1 on white; this is 5.2:1 */
   background: #fff;
   color: var(--blog-ink);
   font-family: "Roboto", "Inter", sans-serif;
@@ -191,7 +191,7 @@
 .blog-card-more {
   display: inline-block;
   margin-top: 30px;
-  color: #8a8a8a;
+  color: var(--blog-muted);
   font-size: 14px;
   text-decoration: none;
 }
@@ -439,6 +439,40 @@
 
 .post-tags a:hover {
   border-color: var(--blog-accent);
+  color: var(--blog-accent);
+}
+
+/* The links a hub page gives to the pages under it, and the site map list */
+.page-children {
+  max-width: 900px;
+  margin: 48px 0 0;
+  padding-top: 24px;
+  border-top: 1px solid var(--blog-line);
+}
+
+.page-children h2 {
+  margin: 0 0 14px;
+  font-size: 22px;
+}
+
+.page-children ul {
+  margin: 0;
+  padding-left: 1.2em;
+  columns: 2 280px;
+  column-gap: 32px;
+}
+
+.page-children li {
+  break-inside: avoid;
+  margin-bottom: 0.5em;
+}
+
+.page-children a {
+  color: var(--blog-link);
+  text-underline-offset: 2px;
+}
+
+.page-children a:hover {
   color: var(--blog-accent);
 }
 

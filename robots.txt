@@ -8,7 +8,5 @@ Disallow: /pages.json
 Disallow: /blogs/posts.json
 Disallow: /blogs/redirects.txt
 Disallow: /blogs/redirects.nginx.conf
-# Pages may be used for search and for answers given by AI assistants. Training use is not stated here.
-Content-Signal: search=yes, ai-input=yes
 
 Sitemap: https://agents.teenpattistars.io/sitemap_index.xml

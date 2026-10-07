@@ -23,6 +23,32 @@ document.addEventListener('DOMContentLoaded', () => {
     return node;
   };
 
+  // The page's own HTML gives every picture a size and says which ones can wait (loading="lazy").
+  // Rebuilding a list from content.js would throw that away, so the page would jump as pictures arrive
+  // and everything below the fold would load at once. A rebuilt picture takes over what the old one with
+  // the same address had; a picture the admin just added gets async decoding and nothing else.
+  const IMAGE_HINTS = ['width', 'height', 'loading', 'decoding', 'fetchpriority'];
+  const imageHints = new Map();
+  const rememberImages = () => {
+    document.querySelectorAll('img[src]').forEach((img) => {
+      const src = img.getAttribute('src');
+      if (imageHints.has(src)) return;
+      const hints = {};
+      IMAGE_HINTS.forEach((name) => { if (img.hasAttribute(name)) hints[name] = img.getAttribute(name); });
+      imageHints.set(src, hints);
+    });
+  };
+  const makeImage = (src, alt) => {
+    const img = el('img');
+    // The hints go on before the address: a picture that gets its address first starts loading at once, lazy or not.
+    const hints = imageHints.get(src);
+    if (hints) Object.keys(hints).forEach((name) => img.setAttribute(name, hints[name]));
+    else img.setAttribute('decoding', 'async');
+    img.setAttribute('alt', alt);
+    img.setAttribute('src', src);
+    return img;
+  };
+
   // Social icons: Font Awesome Free by @fontawesome (https://fontawesome.com), CC BY 4.0.
   // (6.5.2, except the plain Telegram plane, which is 5.15.4.)
   // Each entry is [viewBox, path].
@@ -108,12 +134,8 @@ document.addEventListener('DOMContentLoaded', () => {
     'steps.items': (items, content) =>
       items.map((item, index) => {
         const slide = el('figure', 'install-slide');
-        slide.setAttribute('role', 'group');
-        slide.setAttribute('aria-roledescription', 'slide');
-        slide.setAttribute('aria-label', `${index + 1} of ${items.length}`);
-        const img = el('img');
-        img.src = safeUrl(item.image);
-        img.alt = format(item.alt, content);
+        slide.setAttribute('aria-label', `Step ${index + 1} of ${items.length}`);
+        const img = makeImage(safeUrl(item.image), format(item.alt, content));
         slide.append(img, el('figcaption', '', `${index + 1}. ${format(item.text, content)}`));
         return slide;
       }),
@@ -121,9 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'agencyPlan.highlights': (items, content) =>
       items.map((item) => {
         const box = el('div', 'plan-highlight');
-        const img = el('img');
-        img.src = safeUrl(item.image);
-        img.alt = format(item.alt, content);
+        const img = makeImage(safeUrl(item.image), format(item.alt, content));
         box.append(img, el('p', '', format(item.text, content)));
         return box;
       }),
@@ -140,9 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'bigAgent.items': (items, content) =>
       items.map((item) => {
         const card = el('article', 'agent-card');
-        const img = el('img');
-        img.src = safeUrl(item.image);
-        img.alt = format(item.alt, content);
+        const img = makeImage(safeUrl(item.image), format(item.alt, content));
         card.append(img, el('h3', '', format(item.title, content)), el('p', '', format(item.text, content)));
         return card;
       }),
@@ -161,15 +179,11 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     'partners.items': (items, content) =>
-      items.map((item) => {
-        const img = el('img');
-        img.src = safeUrl(item.image);
-        img.alt = format(item.name, content);
-        return img;
-      }),
+      items.map((item) => makeImage(safeUrl(item.image), format(item.name, content))),
   };
 
   function render() {
+    rememberImages();
     const content = load();
 
     if (!document.body.hasAttribute('data-keep-title')) {
@@ -253,9 +267,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Editing in the admin rebuilds the slides; keep the reader where they were.
     if (root.dataset.scroll) viewport.scrollLeft = Number(root.dataset.scroll);
-    buildDots();
+    const firstTime = !root.dataset.ready;
+    // The first time, the ResizeObserver below reports the size once the page has been laid out. Measuring here
+    // instead would make the browser lay the whole page out in the middle of this script.
+    if (!(firstTime && 'ResizeObserver' in window)) buildDots();
 
-    if (root.dataset.ready) return;
+    if (!firstTime) return;
     root.dataset.ready = '1';
     let frame = 0;
     viewport.addEventListener('scroll', () => {
@@ -287,20 +304,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const dotsBox = root.querySelector('.slider-dots');
     const count = slides.length;
     root.hidden = count === 0;
-    track.replaceChildren();
+    // The page's own HTML already holds these slides. When they show the same pictures they are kept as they are:
+    // replacing the first picture with a new element would restart the browser's paint timing of the largest image on the page.
+    const present = Array.from(track.children);
+    const reuse = count > 0 && present.length === count && present.every((node, i) => {
+      const img = node.querySelector('img');
+      return img && node.getAttribute('aria-hidden') !== 'true' && img.getAttribute('src') === safeUrl(slides[i].image) && (img.getAttribute('alt') || '') === (slides[i].alt || '');
+    });
+    if (!reuse) track.replaceChildren();
     dotsBox.replaceChildren();
     root.teardown = null;
     if (!count) return;
 
-    const makeSlide = (slide, number, isClone) => {
-      const node = el('div', 'slider-slide');
-      const img = el('img');
-      img.src = safeUrl(slide.image);
-      img.alt = isClone ? '' : slide.alt;
-      img.draggable = false;
+    const describe = (node, number) => {
       node.setAttribute('role', 'group');
       node.setAttribute('aria-roledescription', 'slide');
       node.setAttribute('aria-label', `${number} of ${count}`);
+    };
+
+    const makeSlide = (slide, number, isClone) => {
+      const node = el('div', 'slider-slide');
+      const img = makeImage(safeUrl(slide.image), isClone ? '' : slide.alt);
+      // Only the slide the visitor sees first is worth fetching ahead of everything else.
+      if (isClone) img.removeAttribute('fetchpriority');
+      img.draggable = false;
+      describe(node, number);
       if (isClone) node.setAttribute('aria-hidden', 'true');
       node.append(img);
       return node;
@@ -309,12 +337,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // Looping uses a clone of the last slide in front and of the first slide behind,
     // so the slider can keep moving in one direction and jump back unseen.
     const loop = count > 1 && !reducedMotion.matches;
-    const nodes = slides.map((slide, i) => makeSlide(slide, i + 1, false));
-    if (loop) {
-      nodes.unshift(makeSlide(slides[count - 1], count, true));
-      nodes.push(makeSlide(slides[0], 1, true));
+    if (reuse) {
+      present.forEach((node, i) => {
+        describe(node, i + 1);
+        node.querySelector('img').draggable = false;
+      });
+      if (loop) {
+        track.prepend(makeSlide(slides[count - 1], count, true));
+        track.append(makeSlide(slides[0], 1, true));
+      }
+    } else {
+      const nodes = slides.map((slide, i) => makeSlide(slide, i + 1, false));
+      if (loop) {
+        nodes.unshift(makeSlide(slides[count - 1], count, true));
+        nodes.push(makeSlide(slides[0], 1, true));
+      }
+      track.append(...nodes);
     }
-    track.append(...nodes);
 
     const dots = count > 1
       ? slides.map((_, i) => {

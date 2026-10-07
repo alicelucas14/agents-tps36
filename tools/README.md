@@ -44,6 +44,11 @@ re-reads the file: after pulling an updated `redirects.nginx.conf`, press **Save
 the include line has loaded in the editor first) or reload nginx. Check it with `curl -I https://your-site/script.js`:
 the answer should say `Cache-Control: no-cache`.
 
+The same file gives pictures (`webp`, `avif`, `svg`) and fonts (`woff2`) a one-year cache, because they are never replaced under
+the same name; aaPanel only does that for png, jpg and gif. **Cloudflare note:** its *Browser Cache TTL* setting (Caching →
+Configuration) overrides whatever nginx sends. Leave it on **Respect Existing Headers**, otherwise every script, style and
+picture is cached for the 4 hours it defaults to and the rules above do nothing for visitors' browsers.
+
 ### Writing and editing posts in the admin
 
 The **Posts** section of the admin lists every post (newest first, searchable by title, address, category or
@@ -125,18 +130,28 @@ same address, so Google keeps finding them.
 Every page `build` writes carries what search engines, social sites and AI assistants read:
 
 - a title (the site name is added only while the title stays within about 65 characters), a description of up to
-  155 characters that ends at the end of a sentence where it can, a canonical link, `robots` directives that allow
+  155 characters taken from the first paragraphs (not the table of contents, and not a paragraph that repeats the title)
+  that ends at the end of a sentence where it can, a canonical link, `robots` directives that allow
   large picture previews, icons, and Open Graph / Twitter tags with a share picture (`og-default.jpg` when the page has none);
 - structured data (JSON-LD): the organisation (with the social profiles found in the footer) and the website on every
   page, plus `BlogPosting`, `WebPage` or `CollectionPage` and a `BreadcrumbList`;
 - headings in a clean order under the single `<h1>` (the first heading in a text becomes an `<h2>`, none skips a level),
-  and pictures after the first one load lazily;
-- every page of the blog list has its own heading and description (`Blogs – Page 2`), so they do not look like copies.
+  and pictures after the first one load lazily (the first picture, and the first card of a blog list, load at once with
+  high priority because they are usually the largest thing on screen);
+- every page of the blog list has its own heading and description (`Blogs – Page 2`), so they do not look like copies;
+- a page that other pages live under (`/teen-patti-games/`) ends with a **More in …** list linking to each of them, and
+  `/site-map/` lists every page; the footer links to it. Together they keep every page reachable by links, not only through the sitemap;
+- picture addresses in meta tags and structured data are plain ASCII (`DALL·E` becomes `DALL%C2%B7E`).
+
+**Fonts** are served from `/fonts` (Archivo, Inter and Roboto, variable `woff2` files, `latin` and `latin-ext` only), so a page
+never waits for another site. `styles.css` holds the `@font-face` rules and `index.html` preloads the Roboto file; blog and page
+files copy that preload from `index.html`. `admin.html` still loads Google Fonts, which only affects the admin.
 
 Files in the site folder that belong to this and are not generated:
 
 ```
 robots.txt            allows everything public, keeps tools/ and the data dumps out, names the sitemap
+fonts/                the self-hosted font files (see above)
 llms.txt              a short guide to the site for AI assistants (edit it when key pages change)
 favicon.ico, favicon-48.png, apple-touch-icon.png   the icons, made from the logo
 og-default.jpg        the 1200 x 630 picture shown when a page without a picture of its own is shared

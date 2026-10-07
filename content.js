@@ -131,7 +131,8 @@ window.SITE_DEFAULTS = {
       { "label": "Teen Patti Rajasthan", "url": "/teen-patti-rajasthan/" },
       { "label": "Teen Patti Gujarat", "url": "/teen-patti-gujarat/" },
       { "label": "Teen Patti Bihar", "url": "/teen-patti-bihar/" },
-      { "label": "Earning With Teen Patti", "url": "/earning-with-teen-patti-stars-in-india/" }
+      { "label": "Earning With Teen Patti", "url": "/earning-with-teen-patti-stars-in-india/" },
+      { "label": "Site map", "url": "/site-map/" }
     ],
     "social": [
       { "label": "Facebook", "url": "https://www.facebook.com/teenpattistarsindia/", "icon": "facebook" },

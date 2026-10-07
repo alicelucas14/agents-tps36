@@ -40,4 +40,5 @@ Facts as stated on the site (check the linked pages for the current wording):
 - [All blog posts](https://agents.teenpattistars.io/blogs/): more than 240 guides on Teen Patti rules and hand rankings, strategy, bonuses, the Teen Patti Stars app, and the agent and affiliate programme
 
 ## Optional
+- [Site map](https://agents.teenpattistars.io/site-map/): every page in one list, grouped by topic
 - [Sitemap index](https://agents.teenpattistars.io/sitemap_index.xml): every page and post

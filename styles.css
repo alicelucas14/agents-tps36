@@ -1,3 +1,66 @@
+/*
+ * Fonts are served from /fonts instead of Google Fonts: no extra connections and no render-blocking request to
+ * another site. Each file is a variable font, so one file covers every weight used below. "latin-ext" is only
+ * downloaded by a page that needs it (the rupee sign, for example). Source: Google Fonts (Archivo, Inter, Roboto: SIL OFL 1.1).
+ */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/archivo-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400 900;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/archivo-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/roboto-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400 800;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url("/fonts/roboto-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   --bg-deep: #2d0a2a;
   --bg-soft: #5b1836;
@@ -294,7 +357,8 @@ button, a {
   border: 3px solid #f8cc00;
   border-radius: 8px;
   background: #f8cc00;
-  color: #fff;
+  /* White on this yellow is only 1.5:1; the deep purple is 11:1. */
+  color: var(--bg-deep);
   font-family: "Roboto", "Inter", sans-serif;
   font-size: 18px;
   font-weight: 500;
@@ -380,7 +444,7 @@ button, a {
 
 .slider-dot {
   position: relative;
-  width: 17px;
+  width: 24px;
   height: 30px;
   padding: 0;
   border: 0;
@@ -549,6 +613,9 @@ button, a {
 
   .hero-slider {
     order: -1;
+    /* The column inherits align-items: start, which would size the slider to its content (just the dots)
+       until the first picture arrives, and push the text below it down by the picture's height. */
+    align-self: stretch;
   }
 
   .hero-copy {
@@ -1193,6 +1260,7 @@ button, a {
 .footer-links a {
   display: block;
   width: fit-content;
+  min-height: 24px;
   color: #1bb0ce;
   font: 700 18px/25.2px Arial, "Helvetica Neue", Helvetica, sans-serif;
   letter-spacing: 1px;
