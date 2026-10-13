@@ -144,10 +144,10 @@ window.SITE_DEFAULTS = {
   },
   "socialBar": {
     "items": [
-      { "label": "Telegram", "url": "https://t.me/OfficialChannelTeenPattiStars", "icon": "telegram" },
-      { "label": "YouTube", "url": "https://www.youtube.com/", "icon": "youtube" },
-      { "label": "Facebook", "url": "https://www.facebook.com/teenpattistarsindia/", "icon": "facebook" },
-      { "label": "Instagram", "url": "https://www.instagram.com/", "icon": "instagram" },
+      { "label": "Telegram", "url": "https://t.me/TPstarsBigAgent", "icon": "telegram" },
+      { "label": "Pinterest", "url": "https://in.pinterest.com/3pattistars/", "icon": "pinterest" },
+      { "label": "Facebook", "url": "https://www.facebook.com/tpsindiagame/", "icon": "facebook" },
+      { "label": "Instagram", "url": "https://www.instagram.com/letsplaygame2026", "icon": "instagram" },
       { "label": "WhatsApp", "url": "https://www.whatsapp.com/channel/0029VaCbmLb3mFYBIdhgJ90l", "icon": "whatsapp" }
     ]
   }
