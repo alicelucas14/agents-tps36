@@ -148,7 +148,8 @@ window.SITE_DEFAULTS = {
       { "label": "Pinterest", "url": "https://in.pinterest.com/3pattistars/", "icon": "pinterest" },
       { "label": "Facebook", "url": "https://www.facebook.com/tpsindiagame/", "icon": "facebook" },
       { "label": "Instagram", "url": "https://www.instagram.com/letsplaygame2026", "icon": "instagram" },
-      { "label": "WhatsApp", "url": "https://www.whatsapp.com/channel/0029VaCbmLb3mFYBIdhgJ90l", "icon": "whatsapp" }
+      { "label": "WhatsApp", "url": "https://whatsapp.com/channel/0029Vb7bkjr0rGIPBqHxlK2d", "icon": "whatsapp" },
+      { "label": "X", "url": "https://x.com/3pattiindia", "icon": "x" }
     ]
   }
 };
