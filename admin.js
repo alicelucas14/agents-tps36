@@ -505,8 +505,11 @@
               {
                 key: 'icon', label: 'Icon', type: 'select',
                 options: [
-                  ['facebook', 'Facebook'], ['twitter', 'Twitter'], ['telegram', 'Telegram'],
-                  ['whatsapp', 'WhatsApp'], ['instagram', 'Instagram'], ['youtube', 'YouTube'], ['none', 'No icon'],
+                  ['facebook', 'Facebook'], ['twitter', 'Twitter'], ['x', 'X'], ['telegram', 'Telegram'],
+                  ['whatsapp', 'WhatsApp'], ['instagram', 'Instagram'], ['youtube', 'YouTube'],
+                  ['linkedin', 'LinkedIn'], ['pinterest', 'Pinterest'], ['quora', 'Quora'], ['reddit', 'Reddit'],
+                  ['tiktok', 'TikTok'], ['threads', 'Threads'], ['snapchat', 'Snapchat'], ['discord', 'Discord'],
+                  ['medium', 'Medium'], ['none', 'No icon'],
                 ],
               },
             ],
@@ -537,7 +540,10 @@
                 key: 'icon', label: 'Icon', type: 'select',
                 options: [
                   ['telegram', 'Telegram'], ['youtube', 'YouTube'], ['facebook', 'Facebook'],
-                  ['instagram', 'Instagram'], ['whatsapp', 'WhatsApp'], ['twitter', 'Twitter'],
+                  ['instagram', 'Instagram'], ['whatsapp', 'WhatsApp'], ['twitter', 'Twitter'], ['x', 'X'],
+                  ['linkedin', 'LinkedIn'], ['pinterest', 'Pinterest'], ['quora', 'Quora'], ['reddit', 'Reddit'],
+                  ['tiktok', 'TikTok'], ['threads', 'Threads'], ['snapchat', 'Snapchat'], ['discord', 'Discord'],
+                  ['medium', 'Medium'],
                 ],
               },
             ],

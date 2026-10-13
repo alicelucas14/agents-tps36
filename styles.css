@@ -1191,6 +1191,17 @@ button, a {
 .social-bar a[data-network="instagram"] {
   background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
 }
+.social-bar a[data-network="x"],
+.social-bar a[data-network="tiktok"],
+.social-bar a[data-network="threads"],
+.social-bar a[data-network="medium"] { background: #000; }
+.social-bar a[data-network="linkedin"] { background: #0a66c2; }
+.social-bar a[data-network="pinterest"] { background: #e60023; }
+.social-bar a[data-network="quora"] { background: #b92b27; }
+.social-bar a[data-network="reddit"] { background: #ff4500; }
+.social-bar a[data-network="discord"] { background: #5865f2; }
+/* Snapchat's yellow is too light for a white icon. */
+.social-bar a[data-network="snapchat"] { background: #fffc00; color: #000; }
 
 @media (max-width: 680px) {
   .social-bar a {
