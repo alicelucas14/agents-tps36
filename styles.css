@@ -1449,3 +1449,163 @@ button, a {
     line-height: 11px;
   }
 }
+
+/* ---------- Agent Application / Registration Card ---------- */
+
+.agent-apply-wrap {
+  max-width: 860px;
+  margin: 38px auto 0;
+  padding: 0 16px;
+}
+
+.agent-apply-card {
+  background: linear-gradient(135deg, rgba(61, 12, 43, 0.95), rgba(45, 10, 42, 0.98));
+  border: 1px solid rgba(255, 204, 63, 0.35);
+  border-radius: 20px;
+  padding: 32px 28px;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5), 0 0 25px rgba(255, 204, 63, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-apply-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 140px;
+  height: 140px;
+  background: radial-gradient(circle, rgba(255, 204, 63, 0.2) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.agent-apply-head {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.agent-apply-head .eyebrow {
+  display: inline-block;
+  color: #ffcc3f;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.agent-apply-head h3 {
+  color: #fff;
+  font-family: "Archivo", sans-serif;
+  font-size: 1.65rem;
+  font-weight: 800;
+  margin: 0 0 8px;
+}
+
+.agent-apply-head p {
+  color: #f8dcc9;
+  font-size: 0.95rem;
+  max-width: 540px;
+  margin: 0 auto;
+}
+
+.agent-apply-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.apply-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.apply-field label {
+  color: #f8dcc9;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.apply-field input,
+.apply-field select {
+  height: 44px;
+  padding: 0 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 220, 130, 0.25);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 0.92rem;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.apply-field select option {
+  background: #360826;
+  color: #fff;
+}
+
+.apply-field input:focus,
+.apply-field select:focus {
+  border-color: #ffcc3f;
+  outline: none;
+}
+
+.apply-submit-wrap {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.apply-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 32px;
+  background: linear-gradient(180deg, #f8d14e, #f0c114);
+  border: 2px solid #a57a00;
+  border-radius: 999px;
+  color: #2d0d20;
+  font-size: 0.95rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  box-shadow: 0 8px 20px rgba(255, 191, 0, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.apply-submit-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(255, 191, 0, 0.45);
+}
+
+.apply-success-msg {
+  grid-column: 1 / -1;
+  margin: 12px 0 0;
+  padding: 14px 18px;
+  background: rgba(142, 230, 168, 0.15);
+  border: 1px solid rgba(142, 230, 168, 0.4);
+  border-radius: 12px;
+  color: #8ee6a8;
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 680px) {
+  .agent-apply-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-apply-card {
+    padding: 24px 18px;
+  }
+
+  .agent-apply-head h3 {
+    font-size: 1.35rem;
+  }
+}
+

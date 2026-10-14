@@ -636,4 +636,57 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!event.target.closest('.site-header')) setOpen(false);
     });
   }
+
+  // Agent registration form handler
+  const applyForm = document.getElementById('agent-register-form');
+  if (applyForm) {
+    applyForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = (document.getElementById('apply-name') || {}).value?.trim();
+      const phone = (document.getElementById('apply-phone') || {}).value?.trim();
+      const state = (document.getElementById('apply-state') || {}).value || 'Maharashtra';
+      const referral = (document.getElementById('apply-ref') || {}).value?.trim();
+      const successMsg = document.getElementById('apply-success-msg');
+      if (!name || !phone) return;
+
+      const USERS_STORAGE_KEY = 'tps_agents_users_v1';
+      let currentUsers = [];
+      try {
+        const raw = localStorage.getItem(USERS_STORAGE_KEY);
+        currentUsers = raw ? JSON.parse(raw) : [];
+      } catch (err) {
+        currentUsers = [];
+      }
+      if (!Array.isArray(currentUsers)) currentUsers = [];
+
+      const newId = `TPS-${Math.floor(10000 + Math.random() * 90000)}`;
+      const newUser = {
+        id: newId,
+        name: name,
+        phone: phone,
+        email: '',
+        state: state,
+        role: 'Agent',
+        commission: 70,
+        balance: 0,
+        status: 'Pending',
+        referralCode: name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase(),
+        referredBy: referral || 'WEBSITE',
+        registeredAt: new Date().toISOString(),
+        notes: 'Submitted application via website registration form.'
+      };
+
+      currentUsers.unshift(newUser);
+      try {
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(currentUsers));
+      } catch (err) {}
+
+      applyForm.reset();
+      if (successMsg) {
+        successMsg.textContent = `🎉 Congratulations ${name}! Your agent application has been submitted successfully. Your new Agent ID is ${newId}. Our agent manager will review your application and contact you on WhatsApp (${phone}) shortly.`;
+        successMsg.hidden = false;
+        successMsg.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
 });
