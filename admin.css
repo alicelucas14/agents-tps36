@@ -280,6 +280,19 @@ textarea {
   color: var(--ok);
 }
 
+.user-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(255, 204, 63, 0.14);
+  border: 1px solid rgba(255, 204, 63, 0.35);
+  color: var(--gold);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
 .status[data-state="draft"] {
   color: var(--gold);
 }

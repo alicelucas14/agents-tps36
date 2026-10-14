@@ -68,9 +68,49 @@
 
   const newSalt = () => toHex(window.crypto.getRandomValues(new Uint8Array(16)));
 
+  const ADMIN_USERS_KEY = 'tps_admin_users_v2';
+  const SESSION_USER_KEY = 'tps_admin_current_user_v1';
+
   const readAuth = () => {
     try { return JSON.parse(local.get(AUTH_KEY)); } catch { return null; }
   };
+
+  function readAdminUsers() {
+    try {
+      const raw = local.get(ADMIN_USERS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+
+    const auth = readAuth();
+    if (auth && auth.salt && auth.hash) {
+      const initial = [{
+        username: 'admin',
+        salt: auth.salt,
+        hash: auth.hash,
+        role: 'Super Admin',
+        createdAt: new Date().toISOString()
+      }];
+      local.set(ADMIN_USERS_KEY, JSON.stringify(initial));
+      return initial;
+    }
+    return [];
+  }
+
+  function saveAdminUsers(users) {
+    local.set(ADMIN_USERS_KEY, JSON.stringify(users));
+  }
+
+  function getCurrentUser() {
+    try {
+      const u = JSON.parse(session.get(SESSION_USER_KEY));
+      if (u && u.username) return u;
+    } catch {}
+    const users = readAdminUsers();
+    return users[0] ? { username: users[0].username, role: users[0].role } : { username: 'admin', role: 'Super Admin' };
+  }
 
   async function storePasscode(passcode) {
     const salt = newSalt();
@@ -83,6 +123,8 @@
     form: $('#lock-form'),
     title: $('#lock-title'),
     intro: $('#lock-intro'),
+    userRow: $('#lock-user-row'),
+    user: $('#lock-user'),
     pass: $('#lock-pass'),
     confirmRow: $('#lock-confirm-row'),
     confirm: $('#lock-confirm'),
@@ -93,41 +135,63 @@
   let blockedUntil = 0;
 
   function showLock() {
-    const setup = !readAuth();
+    const users = readAdminUsers();
+    const setup = users.length === 0;
     $('#app').hidden = true;
     lock.root.hidden = false;
-    lock.title.textContent = setup ? 'Create an admin passcode' : 'Admin sign in';
+    lock.title.textContent = setup ? 'Create Super Admin account' : 'Admin sign in';
     lock.intro.textContent = setup
-      ? `Choose a passcode of at least ${MIN_PASSCODE} characters. You will use it to open this page on this browser.`
-      : 'Enter your passcode to edit the site.';
-    lock.pass.autocomplete = setup ? 'new-password' : 'current-password';
-    lock.confirmRow.hidden = !setup;
-    lock.submit.textContent = setup ? 'Create passcode' : 'Sign in';
-    lock.form.dataset.mode = setup ? 'setup' : 'login';
+      ? 'Choose a username and password to create the initial Super Admin account.'
+      : 'Sign in with your admin username and password.';
+    if (lock.user) {
+      lock.user.value = setup ? 'admin' : (users.length === 1 ? users[0].username : '');
+    }
     lock.pass.value = '';
     lock.confirm.value = '';
+    lock.confirmRow.hidden = !setup;
+    lock.submit.textContent = setup ? 'Create Super Admin' : 'Sign in';
+    lock.form.dataset.mode = setup ? 'setup' : 'login';
     lock.error.textContent = '';
-    lock.pass.focus();
+    const resetBtn = $('#lock-reset-btn');
+    if (resetBtn) resetBtn.hidden = setup;
+    if (lock.user && lock.user.value) lock.pass.focus();
+    else if (lock.user) lock.user.focus();
+    else lock.pass.focus();
   }
 
   lock.form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    const username = (lock.user ? lock.user.value : 'admin').trim();
     const passcode = lock.pass.value;
     lock.error.textContent = '';
 
+    if (!username) {
+      lock.error.textContent = 'Please enter a username.';
+      if (lock.user) lock.user.focus();
+      return;
+    }
+
     if (lock.form.dataset.mode === 'setup') {
-      if (passcode.length < MIN_PASSCODE) {
-        lock.error.textContent = `Use at least ${MIN_PASSCODE} characters.`;
+      if (passcode.length < 6) {
+        lock.error.textContent = 'Password must be at least 6 characters.';
         return;
       }
       if (passcode !== lock.confirm.value) {
-        lock.error.textContent = 'The two passcodes do not match.';
+        lock.error.textContent = 'Passwords do not match.';
         return;
       }
-      if (!(await storePasscode(passcode))) {
-        lock.error.textContent = 'This browser is blocking storage, so a passcode cannot be saved.';
-        return;
-      }
+      const salt = newSalt();
+      const hash = await digest(`${salt}:${passcode}`);
+      const initialUsers = [{
+        username: username,
+        salt: salt,
+        hash: hash,
+        role: 'Super Admin',
+        createdAt: new Date().toISOString()
+      }];
+      saveAdminUsers(initialUsers);
+      local.set(AUTH_KEY, JSON.stringify({ salt, hash }));
+      session.set(SESSION_USER_KEY, JSON.stringify({ username, role: 'Super Admin' }));
       unlock();
       return;
     }
@@ -138,16 +202,31 @@
       return;
     }
 
-    const auth = readAuth();
-    if (auth && (await digest(`${auth.salt}:${passcode}`)) === auth.hash) {
+    const users = readAdminUsers();
+    const target = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+
+    if (target) {
+      const computedHash = await digest(`${target.salt}:${passcode}`);
+      if (computedHash === target.hash) {
+        failures = 0;
+        session.set(SESSION_USER_KEY, JSON.stringify({ username: target.username, role: target.role }));
+        unlock();
+        return;
+      }
+    }
+
+    // Also support fallback if only password was used for legacy single passcode
+    const legacyAuth = readAuth();
+    if (legacyAuth && (await digest(`${legacyAuth.salt}:${passcode}`)) === legacyAuth.hash) {
       failures = 0;
+      session.set(SESSION_USER_KEY, JSON.stringify({ username: 'admin', role: 'Super Admin' }));
       unlock();
       return;
     }
 
     failures += 1;
     if (failures >= 3) blockedUntil = Date.now() + Math.min(2 ** (failures - 2), 30) * 1000;
-    lock.error.textContent = 'Wrong passcode.';
+    lock.error.textContent = 'Incorrect username or password.';
     lock.pass.select();
   });
 
@@ -161,6 +240,21 @@
     session.remove(SESSION_KEY);
     showLock();
   });
+
+  const lockResetBtn = $('#lock-reset-btn');
+  if (lockResetBtn) {
+    lockResetBtn.addEventListener('click', () => {
+      if (window.confirm('Reset all admin accounts and set up a new Super Admin account?')) {
+        local.remove(AUTH_KEY);
+        local.remove(ADMIN_USERS_KEY);
+        session.remove(SESSION_KEY);
+        session.remove(SESSION_USER_KEY);
+        failures = 0;
+        blockedUntil = 0;
+        showLock();
+      }
+    });
+  }
 
   /* ---------- Content model ---------- */
 
@@ -464,8 +558,8 @@
     },
     {
       id: 'users',
-      label: 'Agents & Users',
-      intro: 'Add, view, edit, search, and export registered agents and members. Manage commission tiers, contact details, balance, and account status.',
+      label: 'Admin Users',
+      intro: 'Add team members with a username, password, and role (Editor or Super Admin).',
       custom: 'users',
     },
     {
@@ -2207,909 +2301,278 @@
     return [back, card];
   }
 
-  /* ---------- Agents & Users Management ---------- */
+  /* ---------- Admin Users Management ---------- */
 
-  const USERS_STORAGE_KEY = 'tps_agents_users_v1';
-  let usersList = null;
-  let usersFilter = { search: '', role: 'all', status: 'all', tier: 'all', sort: 'newest' };
-  let editingUser = null;
-
-  const INDIAN_STATES = [
-    'Maharashtra', 'Gujarat', 'Delhi', 'Rajasthan', 'Bihar', 'Uttar Pradesh',
-    'Punjab', 'Haryana', 'Madhya Pradesh', 'West Bengal', 'Karnataka',
-    'Tamil Nadu', 'Telangana', 'Andhra Pradesh', 'Kerala', 'Odisha',
-    'Assam', 'Goa', 'Other'
-  ];
-
-  const DEFAULT_USERS_DATA = [
-    {
-      id: 'TPS-10492',
-      name: 'Rajesh Sharma',
-      phone: '+91 98201 44521',
-      email: 'rajesh.sharma@example.com',
-      state: 'Maharashtra',
-      role: 'Super Agent',
-      commission: 70,
-      balance: 184500,
-      status: 'Active',
-      referralCode: 'RAJESH70',
-      referredBy: 'DIRECT',
-      registeredAt: '2026-08-15T10:30:00Z',
-      notes: 'Top promoter in Mumbai region with 450+ active player network.'
-    },
-    {
-      id: 'TPS-10518',
-      name: 'Priya Patel',
-      phone: '+91 97123 88902',
-      email: 'priya.p@example.com',
-      state: 'Gujarat',
-      role: 'Super Agent',
-      commission: 70,
-      balance: 126200,
-      status: 'Active',
-      referralCode: 'PRIYA70',
-      referredBy: 'DIRECT',
-      registeredAt: '2026-08-28T14:15:00Z',
-      notes: 'Ahmedabad network leader. High volume instant withdrawals.'
-    },
-    {
-      id: 'TPS-10642',
-      name: 'Amit Kumar Verma',
-      phone: '+91 98112 30419',
-      email: 'amit.verma@example.com',
-      state: 'Delhi',
-      role: 'Agent',
-      commission: 50,
-      balance: 64300,
-      status: 'Active',
-      referralCode: 'AMITDELHI',
-      referredBy: 'RAJESH70',
-      registeredAt: '2026-09-02T09:45:00Z',
-      notes: 'Active daily referral team in NCR.'
-    },
-    {
-      id: 'TPS-10705',
-      name: 'Sunil Choudhary',
-      phone: '+91 94140 77312',
-      email: 'sunil.c@example.com',
-      state: 'Rajasthan',
-      role: 'Agent',
-      commission: 40,
-      balance: 28400,
-      status: 'Pending',
-      referralCode: 'SUNILRAJ',
-      referredBy: 'DIRECT',
-      registeredAt: '2026-10-10T16:20:00Z',
-      notes: 'Registered via web application. Awaiting KYC approval.'
-    },
-    {
-      id: 'TPS-10789',
-      name: 'Deepak Yadav',
-      phone: '+91 99342 11984',
-      email: 'deepak.y@example.com',
-      state: 'Bihar',
-      role: 'Sub-Agent',
-      commission: 30,
-      balance: 9800,
-      status: 'Active',
-      referralCode: 'DEEPAKBH',
-      referredBy: 'AMITDELHI',
-      registeredAt: '2026-10-01T11:00:00Z',
-      notes: 'Patna district player group organizer.'
-    },
-    {
-      id: 'TPS-10812',
-      name: 'Vikram Singh',
-      phone: '+91 98765 43210',
-      email: 'vikram.s@example.com',
-      state: 'Punjab',
-      role: 'Player',
-      commission: 0,
-      balance: 1500,
-      status: 'Active',
-      referralCode: 'VIKRAMP',
-      referredBy: 'RAJESH70',
-      registeredAt: '2026-10-05T18:10:00Z',
-      notes: 'VIP tournament player.'
-    }
-  ];
-
-  function initUsers() {
-    if (usersList) return;
-    const raw = local.get(USERS_STORAGE_KEY);
-    if (raw) {
-      try {
-        usersList = JSON.parse(raw);
-      } catch (err) {
-        usersList = null;
-      }
-    }
-    if (!usersList || !Array.isArray(usersList)) {
-      usersList = clone(DEFAULT_USERS_DATA);
-      local.set(USERS_STORAGE_KEY, JSON.stringify(usersList));
-      fetch('users.json', { cache: 'no-store' })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data && Array.isArray(data.users) && data.users.length) {
-            usersList = data.users;
-            local.set(USERS_STORAGE_KEY, JSON.stringify(usersList));
-            if (activeSection === 'users') {
-              renderNav();
-              renderEditor();
-            }
-          }
-        })
-        .catch(() => {});
-    }
-  }
-
-  function saveUsers(list) {
-    usersList = list;
-    local.set(USERS_STORAGE_KEY, JSON.stringify(usersList));
-    renderNav();
-    renderEditor();
-  }
-
-  function escapeCsvValue(val) {
-    const s = String(val == null ? '' : val);
-    if (/[",\r\n]/.test(s)) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  }
-
-  function parseCsvLine(line) {
-    const result = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i += 1) {
-      const c = line[i];
-      if (c === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i += 1;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (c === ',' && !inQuotes) {
-        result.push(cur.trim());
-        cur = '';
-      } else {
-        cur += c;
-      }
-    }
-    result.push(cur.trim());
-    return result;
-  }
-
-  function exportUsersCSV() {
-    if (!usersList || !usersList.length) {
-      notify('No agents or users to export.');
-      return;
-    }
-    const headers = [
-      'Agent ID', 'Full Name', 'Phone', 'Email', 'State',
-      'Role', 'Commission %', 'Balance (INR)', 'Status',
-      'Referral Code', 'Referred By', 'Registered Date', 'Notes'
-    ];
-    const lines = [headers.join(',')];
-    usersList.forEach((u) => {
-      lines.push([
-        escapeCsvValue(u.id),
-        escapeCsvValue(u.name),
-        escapeCsvValue(u.phone),
-        escapeCsvValue(u.email || ''),
-        escapeCsvValue(u.state || ''),
-        escapeCsvValue(u.role || 'Agent'),
-        escapeCsvValue(u.commission != null ? u.commission : 70),
-        escapeCsvValue(u.balance || 0),
-        escapeCsvValue(u.status || 'Active'),
-        escapeCsvValue(u.referralCode || ''),
-        escapeCsvValue(u.referredBy || 'DIRECT'),
-        escapeCsvValue(u.registeredAt || ''),
-        escapeCsvValue(u.notes || '')
-      ].join(','));
-    });
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = el('a');
-    link.href = url;
-    link.download = `teen-patti-agents-users-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
-    notify(`Exported ${usersList.length} users to CSV spreadsheet.`);
-  }
-
-  function exportUsersJSON() {
-    if (!usersList) return;
-    const data = {
-      version: '1.0',
-      exportedAt: new Date().toISOString(),
-      users: usersList,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = el('a');
-    link.href = url;
-    link.download = 'users.json';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 2000);
-    notify('Downloaded users.json.');
-  }
-
-  function importUsersFile(file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target.result;
-        let imported = [];
-        if (file.name.endsWith('.json')) {
-          const parsed = JSON.parse(text);
-          imported = Array.isArray(parsed) ? parsed : Array.isArray(parsed.users) ? parsed.users : [];
-        } else {
-          const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-          if (lines.length > 1) {
-            for (let i = 1; i < lines.length; i += 1) {
-              const row = parseCsvLine(lines[i]);
-              if (row[1]) {
-                imported.push({
-                  id: row[0] || `TPS-${Math.floor(10000 + Math.random() * 90000)}`,
-                  name: row[1],
-                  phone: row[2] || '',
-                  email: row[3] || '',
-                  state: row[4] || 'Other',
-                  role: row[5] || 'Agent',
-                  commission: Number(row[6]) || 70,
-                  balance: Number(row[7]) || 0,
-                  status: row[8] || 'Active',
-                  referralCode: row[9] || '',
-                  referredBy: row[10] || 'DIRECT',
-                  registeredAt: row[11] || new Date().toISOString(),
-                  notes: row[12] || '',
-                });
-              }
-            }
-          }
-        }
-        if (!imported.length) {
-          notify('Could not find any user records in this file.');
-          return;
-        }
-        const replace = window.confirm(`Found ${imported.length} user records.\n\nClick OK to REPLACE your current list, or CANCEL to MERGE with current users.`);
-        if (replace) {
-          saveUsers(imported);
-        } else {
-          const existingIds = new Set(usersList.map((u) => u.id));
-          imported.forEach((u) => {
-            if (!existingIds.has(u.id)) {
-              usersList.push(u);
-              existingIds.add(u.id);
-            }
-          });
-          saveUsers(usersList);
-        }
-        notify(`Imported ${imported.length} user records successfully.`);
-      } catch (err) {
-        notify(`Import error: ${err.message}`);
-      }
-    };
-    reader.readAsText(file);
-  }
+  let editingAdminUser = null;
 
   function buildUsers() {
-    initUsers();
-    const nodes = [];
+    const users = readAdminUsers();
+    const currentUser = getCurrentUser();
+    const isSuperAdmin = currentUser.role === 'Super Admin';
 
-    // 1. KPI Stats Cards
-    const totalCount = usersList.length;
-    const activeCount = usersList.filter((u) => u.status === 'Active').length;
-    const superCount = usersList.filter((u) => u.role === 'Super Agent' || Number(u.commission) >= 70).length;
-    const totalBalance = usersList.reduce((sum, u) => sum + (Number(u.balance) || 0), 0);
+    const card = el('section', 'card');
 
-    const statsGrid = el('div', 'users-stats-grid');
+    const head = el('div', 'users-table-header-bar');
+    head.style.marginBottom = '18px';
+    head.style.borderRadius = '14px';
 
-    const statTotal = el('div', 'stat-box');
-    statTotal.append(
-      el('span', 'stat-box-label', 'Total Members'),
-      el('span', 'stat-box-value', String(totalCount)),
-      el('span', 'stat-box-sub', `${activeCount} Active accounts`)
+    const titleWrap = el('div');
+    titleWrap.append(
+      el('h3', '', `Admin Users (${users.length})`),
+      el('p', 'blog-line', 'Manage accounts with username and password to log in as Editor or Super Admin.')
     );
 
-    const statActive = el('div', 'stat-box');
-    const activePercent = totalCount ? Math.round((activeCount / totalCount) * 100) : 0;
-    statActive.append(
-      el('span', 'stat-box-label', 'Active Agents'),
-      el('span', 'stat-box-value', String(activeCount)),
-      el('span', 'stat-box-sub', `${activePercent}% of total network`)
-    );
-
-    const statSuper = el('div', 'stat-box');
-    statSuper.append(
-      el('span', 'stat-box-label', 'Super Agents (70%)'),
-      el('span', 'stat-box-value', String(superCount)),
-      el('span', 'stat-box-sub', 'Highest commission tier')
-    );
-
-    const statBalance = el('div', 'stat-box');
-    statBalance.append(
-      el('span', 'stat-box-label', 'Total Agent Balances'),
-      el('span', 'stat-box-value', `₹${totalBalance.toLocaleString('en-IN')}`),
-      el('span', 'stat-box-sub', 'Combined wallet earnings')
-    );
-
-    statsGrid.append(statTotal, statActive, statSuper, statBalance);
-    nodes.push(statsGrid);
-
-    // 2. Action Toolbar & Filter Card
-    const controlCard = el('section', 'card');
-
-    const toolbar = el('div', 'users-toolbar');
-    const toolTitleWrap = el('div');
-    toolTitleWrap.append(
-      el('h3', '', 'Agent & Member Directory'),
-      el('p', 'card-note', 'Add new agents, review pending applications, and manage commission tiers.')
-    );
-
-    const actionsGroup = el('div', 'users-actions-group');
-
-    const addBtn = el('button', 'btn btn-primary', '+ Add New User / Agent');
+    const addBtn = el('button', 'btn btn-primary', '+ Add User');
     addBtn.type = 'button';
+    addBtn.disabled = !isSuperAdmin;
+    if (!isSuperAdmin) {
+      addBtn.title = 'Only Super Admins can add accounts.';
+    }
     addBtn.addEventListener('click', () => {
-      editingUser = {
-        isNew: true,
-        id: `TPS-${Math.floor(10000 + Math.random() * 90000)}`,
-        name: '',
-        phone: '',
-        email: '',
-        state: 'Maharashtra',
-        role: 'Agent',
-        commission: 70,
-        balance: 0,
-        status: 'Active',
-        referralCode: '',
-        referredBy: 'DIRECT',
-        notes: '',
-      };
+      editingAdminUser = { isNew: true, username: '', role: 'Editor' };
       renderEditor();
     });
 
-    const exportCsvBtn = el('button', 'btn', 'Export CSV');
-    exportCsvBtn.type = 'button';
-    exportCsvBtn.addEventListener('click', exportUsersCSV);
+    head.append(titleWrap, addBtn);
+    card.append(head);
 
-    const downloadJsonBtn = el('button', 'btn', 'Download JSON');
-    downloadJsonBtn.type = 'button';
-    downloadJsonBtn.addEventListener('click', exportUsersJSON);
-
-    const fileInput = el('input');
-    fileInput.type = 'file';
-    fileInput.accept = '.csv,.json,application/json,text/csv';
-    fileInput.hidden = true;
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files[0]) importUsersFile(fileInput.files[0]);
-      fileInput.value = '';
-    });
-
-    const importBtn = el('button', 'btn', 'Import…');
-    importBtn.type = 'button';
-    importBtn.addEventListener('click', () => fileInput.click());
-
-    actionsGroup.append(addBtn, exportCsvBtn, downloadJsonBtn, importBtn, fileInput);
-    toolbar.append(toolTitleWrap, actionsGroup);
-
-    // Filter controls
-    const filters = el('div', 'users-filters');
-
-    const searchWrap = el('div', 'users-search-wrap');
-    const searchIcon = el('span', 'users-search-icon', '🔍');
-    const searchInput = el('input', 'users-search-input');
-    searchInput.type = 'search';
-    searchInput.placeholder = 'Search by name, phone, ID, referral code...';
-    searchInput.value = usersFilter.search;
-    searchInput.addEventListener('input', () => {
-      usersFilter.search = searchInput.value;
-      renderEditor();
-    });
-    searchWrap.append(searchIcon, searchInput);
-
-    const roleSelect = el('select', 'users-select');
-    [
-      { value: 'all', label: 'All Roles' },
-      { value: 'Super Agent', label: 'Super Agent' },
-      { value: 'Agent', label: 'Agent' },
-      { value: 'Sub-Agent', label: 'Sub-Agent' },
-      { value: 'Player', label: 'Player' },
-    ].forEach((opt) => {
-      const option = el('option', '', opt.label);
-      option.value = opt.value;
-      if (usersFilter.role === opt.value) option.selected = true;
-      roleSelect.append(option);
-    });
-    roleSelect.addEventListener('change', () => {
-      usersFilter.role = roleSelect.value;
-      renderEditor();
-    });
-
-    const statusSelect = el('select', 'users-select');
-    [
-      { value: 'all', label: 'All Statuses' },
-      { value: 'Active', label: 'Active' },
-      { value: 'Pending', label: 'Pending Review' },
-      { value: 'Suspended', label: 'Suspended' },
-      { value: 'Inactive', label: 'Inactive' },
-    ].forEach((opt) => {
-      const option = el('option', '', opt.label);
-      option.value = opt.value;
-      if (usersFilter.status === opt.value) option.selected = true;
-      statusSelect.append(option);
-    });
-    statusSelect.addEventListener('change', () => {
-      usersFilter.status = statusSelect.value;
-      renderEditor();
-    });
-
-    const tierSelect = el('select', 'users-select');
-    [
-      { value: 'all', label: 'All Commissions' },
-      { value: '70', label: '70% Commission' },
-      { value: '50', label: '50% Commission' },
-      { value: '40', label: '40% Commission' },
-      { value: '30', label: '30% Commission' },
-      { value: '0', label: '0% (Player)' },
-    ].forEach((opt) => {
-      const option = el('option', '', opt.label);
-      option.value = opt.value;
-      if (usersFilter.tier === opt.value) option.selected = true;
-      tierSelect.append(option);
-    });
-    tierSelect.addEventListener('change', () => {
-      usersFilter.tier = tierSelect.value;
-      renderEditor();
-    });
-
-    const sortSelect = el('select', 'users-select');
-    [
-      { value: 'newest', label: 'Sort: Newest First' },
-      { value: 'oldest', label: 'Sort: Oldest First' },
-      { value: 'name', label: 'Sort: Name A–Z' },
-      { value: 'balance', label: 'Sort: Highest Balance' },
-      { value: 'commission', label: 'Sort: Highest Commission' },
-    ].forEach((opt) => {
-      const option = el('option', '', opt.label);
-      option.value = opt.value;
-      if (usersFilter.sort === opt.value) option.selected = true;
-      sortSelect.append(option);
-    });
-    sortSelect.addEventListener('change', () => {
-      usersFilter.sort = sortSelect.value;
-      renderEditor();
-    });
-
-    filters.append(searchWrap, roleSelect, statusSelect, tierSelect, sortSelect);
-    controlCard.append(toolbar, filters);
-    nodes.push(controlCard);
-
-    // 3. Filter and sort user list
-    let filtered = usersList.slice();
-    if (usersFilter.search.trim()) {
-      const q = usersFilter.search.trim().toLowerCase();
-      filtered = filtered.filter((u) =>
-        (u.name && u.name.toLowerCase().includes(q)) ||
-        (u.phone && u.phone.toLowerCase().includes(q)) ||
-        (u.id && u.id.toLowerCase().includes(q)) ||
-        (u.email && u.email.toLowerCase().includes(q)) ||
-        (u.state && u.state.toLowerCase().includes(q)) ||
-        (u.referralCode && u.referralCode.toLowerCase().includes(q))
-      );
-    }
-    if (usersFilter.role !== 'all') {
-      filtered = filtered.filter((u) => u.role === usersFilter.role);
-    }
-    if (usersFilter.status !== 'all') {
-      filtered = filtered.filter((u) => u.status === usersFilter.status);
-    }
-    if (usersFilter.tier !== 'all') {
-      filtered = filtered.filter((u) => String(u.commission) === usersFilter.tier);
+    if (!isSuperAdmin) {
+      const note = el('div', 'card-note');
+      note.textContent = 'You are currently signed in as an Editor. Only Super Admins can add or delete user accounts.';
+      card.append(note);
     }
 
-    filtered.sort((a, b) => {
-      if (usersFilter.sort === 'name') return (a.name || '').localeCompare(b.name || '');
-      if (usersFilter.sort === 'oldest') return new Date(a.registeredAt || 0) - new Date(b.registeredAt || 0);
-      if (usersFilter.sort === 'balance') return (Number(b.balance) || 0) - (Number(a.balance) || 0);
-      if (usersFilter.sort === 'commission') return (Number(b.commission) || 0) - (Number(a.commission) || 0);
-      return new Date(b.registeredAt || 0) - new Date(a.registeredAt || 0);
-    });
+    const tableWrap = el('div', 'users-table-container');
+    const table = el('table', 'users-table');
+    const thead = el('thead');
+    const headRow = el('tr');
+    ['Username', 'Role', 'Date Added', 'Actions'].forEach((h) => headRow.append(el('th', '', h)));
+    thead.append(headRow);
 
-    // 4. Users Table Card
-    const tableCard = el('section', 'card users-table-card');
+    const tbody = el('tbody');
+    users.forEach((u) => {
+      const tr = el('tr');
 
-    const tableHeaderBar = el('div', 'users-table-header-bar');
-    tableHeaderBar.append(
-      el('h3', '', `Members (${filtered.length} of ${usersList.length})`),
-      el('span', 'page-meta', usersFilter.search || usersFilter.role !== 'all' || usersFilter.status !== 'all' ? 'Filtered results' : 'All records')
-    );
-    tableCard.append(tableHeaderBar);
+      // Username column
+      const tdUser = el('td');
+      const profile = el('div', 'user-cell-profile');
+      const isSuper = u.role === 'Super Admin';
+      const avatar = el('div', `user-avatar ${isSuper ? 'avatar-super' : 'avatar-agent'}`, u.username.slice(0, 2).toUpperCase());
+      const nameWrap = el('div', 'user-profile-details');
+      nameWrap.append(el('strong', 'user-name', u.username));
+      if (u.username.toLowerCase() === currentUser.username.toLowerCase()) {
+        nameWrap.append(el('span', 'page-meta', 'Logged in as you'));
+      }
+      profile.append(avatar, nameWrap);
+      tdUser.append(profile);
 
-    if (!filtered.length) {
-      const empty = el('div', 'empty-users-state');
-      empty.append(
-        el('h4', '', 'No users or agents match your search'),
-        el('p', '', 'Try clearing filters or search terms, or add a new agent.')
-      );
-      const clearBtn = el('button', 'btn', 'Clear filters');
-      clearBtn.type = 'button';
-      clearBtn.addEventListener('click', () => {
-        usersFilter = { search: '', role: 'all', status: 'all', tier: 'all', sort: 'newest' };
+      // Role column
+      const tdRole = el('td');
+      const roleBadge = el('span', `badge-role ${isSuper ? 'badge-role-super' : 'badge-role-agent'}`, u.role || 'Editor');
+      tdRole.append(roleBadge);
+
+      // Date Added column
+      const tdDate = el('td');
+      tdDate.append(el('span', 'page-meta', u.createdAt ? u.createdAt.slice(0, 10) : 'Active'));
+
+      // Actions column
+      const tdActions = el('td');
+      const actionsWrap = el('div', 'users-table-actions');
+
+      const editBtn = el('button', 'btn btn-small', 'Change Password / Role');
+      editBtn.type = 'button';
+      const canEdit = isSuperAdmin || u.username.toLowerCase() === currentUser.username.toLowerCase();
+      editBtn.disabled = !canEdit;
+      editBtn.addEventListener('click', () => {
+        editingAdminUser = { isNew: false, username: u.username, role: u.role || 'Editor' };
         renderEditor();
       });
-      empty.append(clearBtn);
-      tableCard.append(empty);
-    } else {
-      const tableWrap = el('div', 'users-table-container');
-      const table = el('table', 'users-table');
-      const thead = el('thead');
-      const headRow = el('tr');
-      ['Member / ID', 'Contact & Region', 'Role & Commission', 'Wallet Balance', 'Status', 'Actions'].forEach((txt) => {
-        headRow.append(el('th', '', txt));
-      });
-      thead.append(headRow);
 
-      const tbody = el('tbody');
-      filtered.forEach((user) => {
-        const tr = el('tr');
+      const deleteBtn = el('button', 'btn btn-small btn-danger', 'Delete');
+      deleteBtn.type = 'button';
+      const isSelf = u.username.toLowerCase() === currentUser.username.toLowerCase();
+      const isOnlySuper = isSuper && users.filter((x) => x.role === 'Super Admin').length <= 1;
+      deleteBtn.disabled = !isSuperAdmin || isSelf || isOnlySuper;
+      if (isSelf) deleteBtn.title = 'You cannot delete your own account';
+      else if (isOnlySuper) deleteBtn.title = 'Cannot delete the only Super Admin';
 
-        // Member Column
-        const tdMember = el('td');
-        const profile = el('div', 'user-cell-profile');
-
-        const initials = (user.name || 'User')
-          .split(' ')
-          .map((n) => n[0])
-          .slice(0, 2)
-          .join('')
-          .toUpperCase();
-
-        const roleClass = user.role === 'Super Agent'
-          ? 'avatar-super'
-          : user.role === 'Sub-Agent'
-            ? 'avatar-sub'
-            : user.role === 'Player'
-              ? 'avatar-player'
-              : 'avatar-agent';
-
-        const avatar = el('div', `user-avatar ${roleClass}`, initials);
-        const details = el('div', 'user-profile-details');
-        details.append(
-          el('span', 'user-name', user.name || 'Unnamed Agent'),
-          el('span', 'user-meta-sub', `${user.id || 'TPS-NEW'} • ${user.registeredAt ? user.registeredAt.slice(0, 10) : 'Recent'}`)
-        );
-        profile.append(avatar, details);
-        tdMember.append(profile);
-
-        // Contact Column
-        const tdContact = el('td');
-        const contactWrap = el('div', 'user-contact-details');
-        const phoneRow = el('div');
-        const phoneLink = el('a', 'user-phone-link', user.phone || 'No phone');
-        phoneLink.href = user.phone ? `tel:${user.phone}` : '#';
-        phoneRow.append(phoneLink);
-
-        const cleanDigits = (user.phone || '').replace(/\D/g, '');
-        if (cleanDigits) {
-          const waLink = el('a', 'wa-btn', 'WhatsApp');
-          waLink.href = `https://wa.me/${cleanDigits}?text=${encodeURIComponent(`Hello ${user.name}, this is Teen Patti Stars support.`)}`;
-          waLink.target = '_blank';
-          waLink.rel = 'noopener';
-          phoneRow.append(waLink);
-        }
-
-        contactWrap.append(phoneRow);
-        if (user.state || user.email) {
-          contactWrap.append(el('span', 'page-meta', [user.state, user.email].filter(Boolean).join(' • ')));
-        }
-        tdContact.append(contactWrap);
-
-        // Role & Commission Column
-        const tdRole = el('td');
-        const rolePill = el(
-          'span',
-          `badge-role ${
-            user.role === 'Super Agent'
-              ? 'badge-role-super'
-              : user.role === 'Sub-Agent'
-                ? 'badge-role-sub'
-                : user.role === 'Player'
-                  ? 'badge-role-player'
-                  : 'badge-role-agent'
-          }`,
-          user.role || 'Agent'
-        );
-        const commPill = el('div', 'badge-commission', `${user.commission != null ? user.commission : 70}% Commission`);
-        tdRole.append(rolePill, commPill);
-
-        // Balance Column
-        const tdBalance = el('td');
-        tdBalance.append(el('span', 'user-balance-value', `₹${Number(user.balance || 0).toLocaleString('en-IN')}`));
-
-        // Status Column
-        const tdStatus = el('td');
-        const statusClass = user.status === 'Active'
-          ? 'status-active'
-          : user.status === 'Pending'
-            ? 'status-pending'
-            : 'status-suspended';
-        const pill = el('span', `status-pill ${statusClass}`);
-        pill.append(el('span', 'status-dot'), document.createTextNode(user.status || 'Active'));
-        tdStatus.append(pill);
-
-        // Actions Column
-        const tdActions = el('td');
-        const actionsWrap = el('div', 'users-table-actions');
-
-        const editBtn = el('button', 'btn btn-small', 'Edit');
-        editBtn.type = 'button';
-        editBtn.addEventListener('click', () => {
-          editingUser = clone(user);
-          renderEditor();
-        });
-
-        const toggleBtn = el(
-          'button',
-          `btn btn-small ${user.status === 'Active' ? '' : 'btn-primary'}`,
-          user.status === 'Active' ? 'Suspend' : 'Activate'
-        );
-        toggleBtn.type = 'button';
-        toggleBtn.addEventListener('click', () => {
-          user.status = user.status === 'Active' ? 'Suspended' : 'Active';
-          saveUsers(usersList);
-          notify(`${user.name} is now ${user.status}.`);
-        });
-
-        const deleteBtn = el('button', 'btn btn-small btn-danger', 'Delete');
-        deleteBtn.type = 'button';
-        deleteBtn.addEventListener('click', () => {
-          if (!window.confirm(`Are you sure you want to delete user ${user.name} (${user.id})?`)) return;
-          const idx = usersList.findIndex((u) => u.id === user.id);
-          if (idx !== -1) {
-            usersList.splice(idx, 1);
-            saveUsers(usersList);
-            notify(`Deleted ${user.name}.`);
-          }
-        });
-
-        actionsWrap.append(editBtn, toggleBtn, deleteBtn);
-        tdActions.append(actionsWrap);
-
-        tr.append(tdMember, tdContact, tdRole, tdBalance, tdStatus, tdActions);
-        tbody.append(tr);
+      deleteBtn.addEventListener('click', () => {
+        if (!window.confirm(`Are you sure you want to delete user "${u.username}"?`)) return;
+        const remaining = users.filter((x) => x.username !== u.username);
+        saveAdminUsers(remaining);
+        renderNav();
+        renderEditor();
+        notify(`User "${u.username}" has been removed.`);
       });
 
-      table.append(thead, tbody);
-      tableWrap.append(table);
-      tableCard.append(tableWrap);
-    }
-    nodes.push(tableCard);
+      actionsWrap.append(editBtn, deleteBtn);
+      tdActions.append(actionsWrap);
 
-    // 5. User Edit / Create Modal Dialog
-    if (editingUser) {
+      tr.append(tdUser, tdRole, tdDate, tdActions);
+      tbody.append(tr);
+    });
+
+    table.append(thead, tbody);
+    tableWrap.append(table);
+    card.append(tableWrap);
+
+    // Modal for Add / Edit User (Username, Password, Role)
+    if (editingAdminUser) {
       const overlay = el('div', 'user-modal-overlay');
       const modal = el('div', 'user-modal');
+      modal.style.maxWidth = '460px';
 
       const modalHead = el('div', 'user-modal-head');
-      const titleWrap = el('div');
-      titleWrap.append(
-        el('h3', '', editingUser.isNew ? 'Add New User / Agent' : `Edit Agent: ${editingUser.name}`),
-        el('p', '', editingUser.isNew ? 'Fill in the agent details below to add them to your site database.' : `Agent ID: ${editingUser.id}`)
+      const headTitle = el('div');
+      headTitle.append(
+        el('h3', '', editingAdminUser.isNew ? 'Add User' : `Edit User: ${editingAdminUser.username}`),
+        el('p', '', editingAdminUser.isNew ? 'Create a new login for a team member.' : 'Update password or permissions.')
       );
       const closeBtn = el('button', 'btn btn-small', '✕');
       closeBtn.type = 'button';
       closeBtn.addEventListener('click', () => {
-        editingUser = null;
+        editingAdminUser = null;
         renderEditor();
       });
-      modalHead.append(titleWrap, closeBtn);
+      modalHead.append(headTitle, closeBtn);
 
       const form = el('form');
       form.noValidate = true;
 
-      const grid = el('div', 'user-form-grid');
+      // 1. Username
+      const userField = el('div', 'field');
+      userField.style.marginBottom = '14px';
+      userField.append(el('label', '', 'Username *'));
+      const userInput = el('input');
+      userInput.type = 'text';
+      userInput.required = true;
+      userInput.placeholder = 'e.g. editor_rahul';
+      userInput.value = editingAdminUser.username || '';
+      if (!editingAdminUser.isNew) {
+        userInput.disabled = true;
+      }
+      userField.append(userInput);
 
-      // Full Name
-      const nameWrap = el('div', 'field');
-      const nameLabel = el('label', '', 'Full Name *');
-      const nameInput = el('input');
-      nameInput.type = 'text';
-      nameInput.required = true;
-      nameInput.value = editingUser.name || '';
-      nameInput.placeholder = 'e.g. Rajesh Sharma';
-      nameWrap.append(nameLabel, nameInput);
+      // 2. Password
+      const passField = el('div', 'field');
+      passField.style.marginBottom = '14px';
+      passField.append(el('label', '', editingAdminUser.isNew ? 'Password *' : 'New Password (optional)'));
+      const passInput = el('input');
+      passInput.type = 'password';
+      passInput.required = editingAdminUser.isNew;
+      passInput.placeholder = editingAdminUser.isNew ? 'At least 6 characters' : 'Leave empty to keep existing password';
+      passField.append(passInput);
 
-      // Phone
-      const phoneWrap = el('div', 'field');
-      const phoneLabel = el('label', '', 'Phone / WhatsApp Number *');
-      const phoneInput = el('input');
-      phoneInput.type = 'tel';
-      phoneInput.required = true;
-      phoneInput.value = editingUser.phone || '';
-      phoneInput.placeholder = '+91 98765 43210';
-      phoneWrap.append(phoneLabel, phoneInput);
-
-      // Email
-      const emailWrap = el('div', 'field');
-      const emailLabel = el('label', '', 'Email Address (optional)');
-      const emailInput = el('input');
-      emailInput.type = 'email';
-      emailInput.value = editingUser.email || '';
-      emailInput.placeholder = 'agent@example.com';
-      emailWrap.append(emailLabel, emailInput);
-
-      // State
-      const stateWrap = el('div', 'field');
-      const stateLabel = el('label', '', 'State / Region');
-      const stateSelect = el('select', 'users-select');
-      INDIAN_STATES.forEach((st) => {
-        const opt = el('option', '', st);
-        opt.value = st;
-        if (editingUser.state === st) opt.selected = true;
-        stateSelect.append(opt);
+      // 3. Role
+      const roleField = el('div', 'field');
+      roleField.style.marginBottom = '18px';
+      roleField.append(el('label', '', 'Role *'));
+      const roleSelect = el('select', 'users-select');
+      [
+        { value: 'Editor', label: 'Editor (Can edit site content)' },
+        { value: 'Super Admin', label: 'Super Admin (Full access & user management)' },
+      ].forEach((opt) => {
+        const option = el('option', '', opt.label);
+        option.value = opt.value;
+        if (editingAdminUser.role === opt.value) option.selected = true;
+        roleSelect.append(option);
       });
-      stateWrap.append(stateLabel, stateSelect);
+      if (!isSuperAdmin) {
+        roleSelect.disabled = true;
+      }
+      roleField.append(roleSelect);
 
-      // Role
-      const roleWrap = el('div', 'field');
-      const roleLabel = el('label', '', 'Role');
-      const roleSelectModal = el('select', 'users-select');
-      ['Super Agent', 'Agent', 'Sub-Agent', 'Player'].forEach((r) => {
-        const opt = el('option', '', r);
-        opt.value = r;
-        if (editingUser.role === r) opt.selected = true;
-        roleSelectModal.append(opt);
-      });
-      roleWrap.append(roleLabel, roleSelectModal);
+      const errorMsg = el('p', 'field-msg');
+      errorMsg.style.marginBottom = '12px';
 
-      // Commission Rate
-      const commWrap = el('div', 'field');
-      const commLabel = el('label', '', 'Commission Rate (%)');
-      const commInput = el('input');
-      commInput.type = 'number';
-      commInput.min = '0';
-      commInput.max = '100';
-      commInput.value = String(editingUser.commission != null ? editingUser.commission : 70);
-      commWrap.append(commLabel, commInput);
-
-      // Status
-      const statusWrap = el('div', 'field');
-      const statusLabel = el('label', '', 'Account Status');
-      const statusSelectModal = el('select', 'users-select');
-      ['Active', 'Pending', 'Suspended', 'Inactive'].forEach((st) => {
-        const opt = el('option', '', st);
-        opt.value = st;
-        if (editingUser.status === st) opt.selected = true;
-        statusSelectModal.append(opt);
-      });
-      statusWrap.append(statusLabel, statusSelectModal);
-
-      // Balance
-      const balanceWrap = el('div', 'field');
-      const balanceLabel = el('label', '', 'Wallet Balance (₹ INR)');
-      const balanceInput = el('input');
-      balanceInput.type = 'number';
-      balanceInput.min = '0';
-      balanceInput.value = String(editingUser.balance != null ? editingUser.balance : 0);
-      balanceWrap.append(balanceLabel, balanceInput);
-
-      // Referral Code
-      const refWrap = el('div', 'field');
-      const refLabel = el('label', '', 'Agent Referral Code');
-      const refInput = el('input');
-      refInput.type = 'text';
-      refInput.placeholder = 'e.g. TPSRAJ70';
-      refInput.value = editingUser.referralCode || '';
-      refWrap.append(refLabel, refInput);
-
-      // Referred By
-      const refByWrap = el('div', 'field');
-      const refByLabel = el('label', '', 'Referred By / Parent Code');
-      const refByInput = el('input');
-      refByInput.type = 'text';
-      refByInput.placeholder = 'DIRECT or sponsor code';
-      refByInput.value = editingUser.referredBy || 'DIRECT';
-      refByWrap.append(refByLabel, refByInput);
-
-      // Notes
-      const notesWrap = el('div', 'field full-span');
-      const notesLabel = el('label', '', 'Notes / Remarks');
-      const notesInput = el('textarea');
-      notesInput.rows = 3;
-      notesInput.placeholder = 'Any notes, withdrawal preferences, or special agreements...';
-      notesInput.value = editingUser.notes || '';
-      notesWrap.append(notesLabel, notesInput);
-
-      grid.append(
-        nameWrap, phoneWrap, emailWrap, stateWrap,
-        roleWrap, commWrap, statusWrap, balanceWrap,
-        refWrap, refByWrap, notesWrap
-      );
-
-      const modalActions = el('div', 'user-modal-actions');
-      const cancelBtn = el('button', 'btn', 'Cancel');
-      cancelBtn.type = 'button';
-      cancelBtn.addEventListener('click', () => {
-        editingUser = null;
+      const actions = el('div', 'user-modal-actions');
+      const cancel = el('button', 'btn', 'Cancel');
+      cancel.type = 'button';
+      cancel.addEventListener('click', () => {
+        editingAdminUser = null;
         renderEditor();
       });
 
-      const saveBtn = el('button', 'btn btn-primary', editingUser.isNew ? 'Create User / Agent' : 'Save Changes');
-      saveBtn.type = 'submit';
+      const save = el('button', 'btn btn-primary', editingAdminUser.isNew ? 'Create User' : 'Save Changes');
+      save.type = 'submit';
 
-      modalActions.append(cancelBtn, saveBtn);
-      form.append(grid, modalActions);
+      actions.append(cancel, save);
+      form.append(userField, passField, roleField, errorMsg, actions);
 
-      form.addEventListener('submit', (e) => {
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const nameVal = nameInput.value.trim();
-        const phoneVal = phoneInput.value.trim();
-        if (!nameVal) {
-          notify('Please enter a full name.');
-          nameInput.focus();
-          return;
-        }
-        if (!phoneVal) {
-          notify('Please enter a phone number.');
-          phoneInput.focus();
+        errorMsg.textContent = '';
+        const uname = userInput.value.trim().toLowerCase();
+        const pwd = passInput.value;
+
+        if (!uname) {
+          errorMsg.textContent = 'Please enter a username.';
+          userInput.focus();
           return;
         }
 
-        const isNew = Boolean(editingUser.isNew);
-        const record = {
-          id: editingUser.id || `TPS-${Math.floor(10000 + Math.random() * 90000)}`,
-          name: nameVal,
-          phone: phoneVal,
-          email: emailInput.value.trim(),
-          state: stateSelect.value,
-          role: roleSelectModal.value,
-          commission: Number(commInput.value) || 0,
-          balance: Number(balanceInput.value) || 0,
-          status: statusSelectModal.value,
-          referralCode: refInput.value.trim() || nameVal.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase(),
-          referredBy: refByInput.value.trim() || 'DIRECT',
-          registeredAt: isNew ? new Date().toISOString() : (editingUser.registeredAt || new Date().toISOString()),
-          notes: notesInput.value.trim(),
-        };
-
-        if (isNew) {
-          usersList.unshift(record);
-          notify(`Added new agent: ${record.name} (${record.id})`);
+        if (editingAdminUser.isNew) {
+          if (users.some((x) => x.username.toLowerCase() === uname)) {
+            errorMsg.textContent = `Username "${uname}" is already taken.`;
+            userInput.focus();
+            return;
+          }
+          if (pwd.length < 6) {
+            errorMsg.textContent = 'Password must be at least 6 characters.';
+            passInput.focus();
+            return;
+          }
+          const salt = newSalt();
+          const hash = await digest(`${salt}:${pwd}`);
+          users.push({
+            username: uname,
+            salt: salt,
+            hash: hash,
+            role: roleSelect.value,
+            createdAt: new Date().toISOString()
+          });
+          saveAdminUsers(users);
+          notify(`User "${uname}" added as ${roleSelect.value}.`);
         } else {
-          const idx = usersList.findIndex((u) => u.id === editingUser.id);
-          if (idx !== -1) {
-            usersList[idx] = record;
-            notify(`Updated agent details for ${record.name}.`);
+          const userIdx = users.findIndex((x) => x.username.toLowerCase() === editingAdminUser.username.toLowerCase());
+          if (userIdx !== -1) {
+            if (pwd) {
+              if (pwd.length < 6) {
+                errorMsg.textContent = 'Password must be at least 6 characters.';
+                passInput.focus();
+                return;
+              }
+              const salt = newSalt();
+              const hash = await digest(`${salt}:${pwd}`);
+              users[userIdx].salt = salt;
+              users[userIdx].hash = hash;
+            }
+            if (isSuperAdmin) {
+              users[userIdx].role = roleSelect.value;
+            }
+            saveAdminUsers(users);
+            notify(`Updated user "${editingAdminUser.username}".`);
           }
         }
-        editingUser = null;
-        saveUsers(usersList);
+        editingAdminUser = null;
+        renderNav();
+        renderEditor();
       });
 
       modal.append(modalHead, form);
       overlay.append(modal);
-
-      overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-          editingUser = null;
+      overlay.addEventListener('click', (ev) => {
+        if (ev.target === overlay) {
+          editingAdminUser = null;
           renderEditor();
         }
       });
 
-      nodes.push(overlay);
-      window.setTimeout(() => nameInput.focus(), 50);
+      card.append(overlay);
+      window.setTimeout(() => (editingAdminUser.isNew ? userInput.focus() : passInput.focus()), 50);
     }
 
-    return nodes;
+    return [card];
   }
 
   /* ---------- Editor shell ---------- */
@@ -3125,7 +2588,7 @@
           : section.id === 'posts'
             ? postsChangeCount()
             : section.id === 'users'
-              ? (usersList ? usersList.length : 0)
+              ? readAdminUsers().length
               : 0;
         const button = el('button', 'nav-item', waiting ? `${section.label} (${waiting})` : section.label);
         button.type = 'button';
@@ -3219,7 +2682,11 @@
     state = window.SiteContent.load();
     pagesDraft = readPagesDraft();
     postsDraft = readDraftFrom(POSTS_DRAFT_KEY);
-    initUsers();
+    const cur = getCurrentUser();
+    const userTag = $('#user-tag');
+    if (userTag) {
+      userTag.textContent = `${cur.username} (${cur.role})`;
+    }
     if (!isDirty()) local.remove(DRAFT_KEY);
     setStatus(isDirty(), true);
 
