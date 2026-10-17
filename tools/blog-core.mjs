@@ -734,6 +734,14 @@ function pagination(page, pages) {
  * Builds every blog file. Returns [{ path, content }] with paths relative to the site folder.
  * settings: { title, perPage, author }.
  */
+// Old WordPress addresses that Search Console still lists as "Not found" (checked 2026-10-17).
+// MOVED: an older address of a post that exists now. GONE: posts that were never moved here (off-topic casino text), answered with 410.
+const LEGACY_MOVED = { 'teen-patti-stars-login-guide-how-to-access-your-account': 'teen-patti-stars-login-guide' };
+const LEGACY_GONE = [
+  'sensazioni-di-lusso-nel-casin-online-i-piccoli-dettagli-che-sorprendono',
+  'when-pixels-meet-neon-the-aesthetics-of-online-casino-atmosphere',
+];
+
 export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {}, skipRedirects = new Set() }) {
   const title = settings.title || 'Blogs';
   const perPage = Math.max(1, Math.min(48, Number(settings.perPage) || 9));
@@ -889,11 +897,15 @@ ${lazyImages(outlineHeadings(post.html))}
         .join('\n')}\n</urlset>\n`,
     });
   }
+  const legacyMoved = Object.entries(LEGACY_MOVED)
+    .map(([old, slug]) => [old, posts.find((p) => p.slug === slug)])
+    .filter(([, post]) => post);
   files.push({
     path: `${POSTS_DIR}/redirects.txt`,
     content: `# Old WordPress address -> new page (permanent redirect). Works as a Netlify _redirects file;\n# for Apache or nginx, turn each line into a 301 rule.\n${posts
       .filter((p) => p.originalSlug && !skipRedirects.has(p.originalSlug))
       .map((p) => `/${p.originalSlug}/ ${postUrl(p)} 301`)
+      .concat(legacyMoved.map(([old, post]) => `/${old}/ ${postUrl(post)} 301`))
       .join('\n')}\n`,
   });
 
@@ -932,8 +944,11 @@ ${lazyImages(outlineHeadings(post.html))}
       'location ~* "\\.(?:webp|avif|svg|woff2?)$" { expires 1y; }',
       ...groups.map((names) => `location ~ "^/(${names.join('|')})/?$" { return 301 /${POSTS_DIR}/$1/; }`),
       ...renamed.map((p) => `location = /${p.originalSlug}/ { return 301 ${postUrl(p)}; }`),
-      '# WordPress listed every post under this category page',
+      ...legacyMoved.map(([old, post]) => `location = /${old}/ { return 301 ${postUrl(post)}; }`),
+      ...LEGACY_GONE.map((old) => `location = /${old}/ { return 410; }`),
+      '# WordPress listed every post under this category page, and had a page per month (/2024/05/) and per author (/author/name/)',
       `location ~ "^/category/blog/?$" { return 301 /${POSTS_DIR}/; }`,
+      `location ~ "^/(?:20[0-9]{2}(?:/[0-9]{2})?|author/[^/]+)(?:/page/[0-9]+)?/?$" { return 301 /${POSTS_DIR}/; }`,
     ].filter(Boolean).join('\n') + '\n',
   });
   return files;
@@ -942,7 +957,7 @@ ${lazyImages(outlineHeadings(post.html))}
 /* ---------- plain pages: WordPress "pages" kept at their old addresses (/big-agent-india/, /teen-patti-games/trx-win-go/ ...) ---------- */
 
 // First folder names this site already uses, so an imported page cannot take them over.
-const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'admin', 'index', 'site-map', 'fonts']);
+const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'author', 'admin', 'index', 'site-map', 'fonts']);
 
 const metaContent = (head, attribute, value) => {
   const tag = head.match(new RegExp(`<meta\\b[^>]*\\b${attribute}=["']${value}["'][^>]*>`, 'i'));

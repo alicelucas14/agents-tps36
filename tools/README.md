@@ -36,6 +36,12 @@ blogs/posts.json              the cleaned posts, so pages can be rebuilt later
 Re-importing replaces the generated pages and removes pages for posts that no longer exist.
 Downloaded images in `blogs/media` are kept.
 
+**Old addresses that are not a post's own.** Search Console lists old WordPress addresses as "Not found" until they answer
+with something definite. `LEGACY_MOVED` and `LEGACY_GONE` at the top of `blog-core.mjs` hold them: an older address of a
+post that exists gets a 301, two off-topic posts that were never moved get `410 Gone`, and one rule sends the old month
+and author archives (`/2024/05/`, `/author/name/page/2/`) to `/blogs/`. Add a line there, run `build`, and apply the
+file as described below.
+
 **Updates that appear by themselves.** aaPanel tells browsers to keep `.js`, `.css` and `.json` files for 12 hours,
 and Cloudflare keeps its own copy for as long, so a changed script or stylesheet could stay hidden until someone
 purged the cache. `redirects.nginx.conf` therefore also holds one rule that makes those files revalidate on every
