@@ -139,6 +139,9 @@ Every page `build` writes carries what search engines, social sites and AI assis
   and pictures after the first one load lazily (the first picture, and the first card of a blog list, load at once with
   high priority because they are usually the largest thing on screen);
 - every page of the blog list has its own heading and description (`Blogs – Page 2`), so they do not look like copies;
+- a **Related articles** list on every post (the six posts sharing the most title words and tags, rarer words counting more),
+  so a post is linked from more than the paged blog list and the site map; the tag links under a post go to `/blogs/?s=…`,
+  which shows the same page as `/blogs/`, so they carry `rel="nofollow"` and search engines do not crawl them as 59 copies of it;
 - a page that other pages live under (`/teen-patti-games/`) ends with a **More in …** list linking to each of them, and
   `/site-map/` lists every page; the footer links to it. Together they keep every page reachable by links, not only through the sitemap;
 - picture addresses in meta tags and structured data are plain ASCII (`DALL·E` becomes `DALL%C2%B7E`).

@@ -658,6 +658,38 @@ ${chrome.sidebar ? `\n    ${chrome.sidebar}\n` : ''}
 const postUrl = (post) => `/${POSTS_DIR}/${post.slug}/`;
 const pageUrl = (page) => (page <= 1 ? `/${POSTS_DIR}/` : `/${POSTS_DIR}/page/${page}/`);
 
+const RELATED_STOP_WORDS = new Set('the and for with from that this your you are how what why when which who into about more most best top guide complete explained explain online game games app apps new vs its has have can will not all any one way ways'.split(' '));
+
+// For every post, the posts most like it: shared title words and tags, where a word few posts use counts more than one
+// every post uses. Without these links a post is reachable only from the paged list and the site map, which search
+// engines read as "unimportant" and leave out of the index. Ties go to the newer post, so the result never depends on order.
+function relatedPosts(posts, limit = 6) {
+  const termsOf = (post) => {
+    const words = String(post.title || '').toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+    const terms = new Set(words.filter((word) => !RELATED_STOP_WORDS.has(word)));
+    (post.tags || []).forEach((tag) => terms.add(`tag:${String(tag).toLowerCase()}`));
+    return terms;
+  };
+  const terms = new Map(posts.map((post) => [post.slug, termsOf(post)]));
+  const docFrequency = new Map();
+  terms.forEach((set) => set.forEach((term) => docFrequency.set(term, (docFrequency.get(term) || 0) + 1)));
+  const weight = (term) => Math.log(posts.length / docFrequency.get(term));
+  const result = new Map();
+  posts.forEach((post) => {
+    const mine = terms.get(post.slug);
+    const scored = [];
+    posts.forEach((other) => {
+      if (other === post) return;
+      let score = 0;
+      terms.get(other.slug).forEach((term) => { if (mine.has(term)) score += weight(term); });
+      if (score > 0) scored.push({ other, score });
+    });
+    scored.sort((a, b) => b.score - a.score || String(b.other.date).localeCompare(String(a.other.date)) || a.other.slug.localeCompare(b.other.slug));
+    result.set(post.slug, scored.slice(0, limit).map((entry) => entry.other));
+  });
+  return result;
+}
+
 const searchForm = (idSuffix) => `<form class="blog-search" role="search" action="/${POSTS_DIR}/" method="get">
         <label class="visually-hidden" for="blog-search-${idSuffix}">Search articles</label>
         <input id="blog-search-${idSuffix}" type="search" name="s" placeholder="Search articles" autocomplete="off" />
@@ -751,9 +783,11 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
 
   // Post pages
   const recent = posts.slice(0, 5);
+  const relatedBySlug = relatedPosts(posts);
   posts.forEach((post, index) => {
     const newer = posts[index - 1];
     const older = posts[index + 1];
+    const related = relatedBySlug.get(post.slug) || [];
     const url = abs(postUrl(post));
     const metaLine = [
       `<time datetime="${escapeHtml(post.date.slice(0, 10))}">${escapeHtml(formatDate(post.date))}</time>`,
@@ -769,7 +803,13 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
           <div class="post-content">
 ${lazyImages(outlineHeadings(post.html))}
           </div>
-          ${post.tags.length ? `<p class="post-tags"><span class="visually-hidden">Tags:</span> ${post.tags.map((tag) => `<a href="/${POSTS_DIR}/?s=${encodeURIComponent(tag)}">${escapeHtml(tag)}</a>`).join(' ')}</p>` : ''}
+          ${post.tags.length ? `<p class="post-tags"><span class="visually-hidden">Tags:</span> ${post.tags.map((tag) => `<a href="/${POSTS_DIR}/?s=${encodeURIComponent(tag)}" rel="nofollow">${escapeHtml(tag)}</a>`).join(' ')}</p>` : ''}
+          ${related.length ? `<section class="page-children" aria-labelledby="related-posts-title">
+            <h2 id="related-posts-title">Related articles</h2>
+            <ul>
+              ${related.map((r) => `<li><a href="${postUrl(r)}">${escapeHtml(clip(r.title, 90))}</a></li>`).join('\n              ')}
+            </ul>
+          </section>` : ''}
           <nav class="post-nav" aria-label="More posts">
             ${older ? `<a class="post-nav-older" rel="prev" href="${postUrl(older)}"><span>← Older</span>${escapeHtml(older.title)}</a>` : '<span></span>'}
             ${newer ? `<a class="post-nav-newer" rel="next" href="${postUrl(newer)}"><span>Newer →</span>${escapeHtml(newer.title)}</a>` : '<span></span>'}
@@ -852,7 +892,7 @@ ${lazyImages(outlineHeadings(post.html))}
   files.push({
     path: `${POSTS_DIR}/redirects.txt`,
     content: `# Old WordPress address -> new page (permanent redirect). Works as a Netlify _redirects file;\n# for Apache or nginx, turn each line into a 301 rule.\n${posts
-      .filter((p) => p.originalSlug)
+      .filter((p) => p.originalSlug && !skipRedirects.has(p.originalSlug))
       .map((p) => `/${p.originalSlug}/ ${postUrl(p)} 301`)
       .join('\n')}\n`,
   });
