@@ -38,8 +38,8 @@ Downloaded images in `blogs/media` are kept.
 
 **Old addresses that are not a post's own.** Search Console lists old WordPress addresses as "Not found" until they answer
 with something definite. `LEGACY_MOVED` and `LEGACY_GONE` at the top of `blog-core.mjs` hold them: an older address of a
-post that exists gets a 301, two off-topic posts that were never moved get `410 Gone`, and one rule sends the old month
-and author archives (`/2024/05/`, `/author/name/page/2/`) to `/blogs/`. Add a line there, run `build`, and apply the
+post that exists gets a 301, two off-topic posts that were never moved get `410 Gone`, and one rule sends the old month,
+author and tag archives (`/2024/05/`, `/author/name/page/2/`, `/tag/name/page/3/`) to `/blogs/`. Add a line there, run `build`, and apply the
 file as described below.
 
 **Updates that appear by themselves.** aaPanel tells browsers to keep `.js`, `.css` and `.json` files for 12 hours,

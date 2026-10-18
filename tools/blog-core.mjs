@@ -946,9 +946,9 @@ ${lazyImages(outlineHeadings(post.html))}
       ...renamed.map((p) => `location = /${p.originalSlug}/ { return 301 ${postUrl(p)}; }`),
       ...legacyMoved.map(([old, post]) => `location = /${old}/ { return 301 ${postUrl(post)}; }`),
       ...LEGACY_GONE.map((old) => `location = /${old}/ { return 410; }`),
-      '# WordPress listed every post under this category page, and had a page per month (/2024/05/) and per author (/author/name/)',
+      '# WordPress listed every post under this category page, and had a page per month (/2024/05/), per author (/author/name/) and per tag (/tag/name/)',
       `location ~ "^/category/blog/?$" { return 301 /${POSTS_DIR}/; }`,
-      `location ~ "^/(?:20[0-9]{2}(?:/[0-9]{2})?|author/[^/]+)(?:/page/[0-9]+)?/?$" { return 301 /${POSTS_DIR}/; }`,
+      `location ~ "^/(?:20[0-9]{2}(?:/[0-9]{2})?|(?:author|tag)/[^/]+)(?:/page/[0-9]+)?/?$" { return 301 /${POSTS_DIR}/; }`,
     ].filter(Boolean).join('\n') + '\n',
   });
   return files;
@@ -957,7 +957,7 @@ ${lazyImages(outlineHeadings(post.html))}
 /* ---------- plain pages: WordPress "pages" kept at their old addresses (/big-agent-india/, /teen-patti-games/trx-win-go/ ...) ---------- */
 
 // First folder names this site already uses, so an imported page cannot take them over.
-const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'author', 'admin', 'index', 'site-map', 'fonts']);
+const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'author', 'tag', 'admin', 'index', 'site-map', 'fonts']);
 
 const metaContent = (head, attribute, value) => {
   const tag = head.match(new RegExp(`<meta\\b[^>]*\\b${attribute}=["']${value}["'][^>]*>`, 'i'));
