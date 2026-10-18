@@ -740,6 +740,7 @@ const LEGACY_MOVED = { 'teen-patti-stars-login-guide-how-to-access-your-account'
 const LEGACY_GONE = [
   'sensazioni-di-lusso-nel-casin-online-i-piccoli-dettagli-che-sorprendono',
   'when-pixels-meet-neon-the-aesthetics-of-online-casino-atmosphere',
+  'notte-fluida-l-intrattenimento-dei-casin-online-raccontato-come-una-sessione',
 ];
 
 export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {}, skipRedirects = new Set() }) {
@@ -949,6 +950,9 @@ ${lazyImages(outlineHeadings(post.html))}
       '# WordPress listed every post under this category page, and had a page per month (/2024/05/), per author (/author/name/) and per tag (/tag/name/)',
       `location ~ "^/category/blog/?$" { return 301 /${POSTS_DIR}/; }`,
       `location ~ "^/(?:20[0-9]{2}(?:/[0-9]{2})?|(?:author|tag)/[^/]+)(?:/page/[0-9]+)?/?$" { return 301 /${POSTS_DIR}/; }`,
+      '# WordPress feeds (/feed/, /post-name/feed/) and its core scripts (/wp-includes/) are gone for good; this site has no feed',
+      'location ~ "^/(?:.+/)?feed/?$" { return 410; }',
+      'location ^~ /wp-includes/ { return 410; }',
     ].filter(Boolean).join('\n') + '\n',
   });
   return files;
