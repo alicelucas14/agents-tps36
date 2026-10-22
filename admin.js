@@ -238,7 +238,11 @@
 
   $('#lock-btn').addEventListener('click', () => {
     session.remove(SESSION_KEY);
+    session.remove(SESSION_USER_KEY);
+    failures = 0;
+    blockedUntil = 0;
     showLock();
+    lock.error.textContent = 'You have been logged out.';
   });
 
   const lockResetBtn = $('#lock-reset-btn');
