@@ -152,8 +152,6 @@
     lock.submit.textContent = setup ? 'Create Super Admin' : 'Sign in';
     lock.form.dataset.mode = setup ? 'setup' : 'login';
     lock.error.textContent = '';
-    const resetBtn = $('#lock-reset-btn');
-    if (resetBtn) resetBtn.hidden = setup;
     if (lock.user && lock.user.value) lock.pass.focus();
     else if (lock.user) lock.user.focus();
     else lock.pass.focus();
@@ -244,21 +242,6 @@
     showLock();
     lock.error.textContent = 'You have been logged out.';
   });
-
-  const lockResetBtn = $('#lock-reset-btn');
-  if (lockResetBtn) {
-    lockResetBtn.addEventListener('click', () => {
-      if (window.confirm('Reset all admin accounts and set up a new Super Admin account?')) {
-        local.remove(AUTH_KEY);
-        local.remove(ADMIN_USERS_KEY);
-        session.remove(SESSION_KEY);
-        session.remove(SESSION_USER_KEY);
-        failures = 0;
-        blockedUntil = 0;
-        showLock();
-      }
-    });
-  }
 
   /* ---------- Content model ---------- */
 
