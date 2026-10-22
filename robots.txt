@@ -4,6 +4,8 @@
 User-agent: *
 Allow: /
 Disallow: /tools/
+Disallow: /admin.html
+Disallow: /api/
 Disallow: /pages.json
 Disallow: /blogs/posts.json
 Disallow: /blogs/redirects.txt
