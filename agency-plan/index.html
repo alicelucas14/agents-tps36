@@ -281,9 +281,9 @@
         <div class="agent-apply-wrap" id="agent-registration">
           <div class="agent-apply-card">
             <div class="agent-apply-head">
-              <span class="eyebrow">Instant Agent Registration</span>
-              <h3>Join the 10,000+ Agent Community</h3>
-              <p>Fill out your details to activate your unique agent ID and start earning up to 70% commission.</p>
+              <span class="eyebrow" data-bind="agentApply.eyebrow">Instant Agent Registration</span>
+              <h3 data-bind="agentApply.title">Join the 10,000+ Agent Community</h3>
+              <p data-bind="agentApply.subtitle">Fill out your details to activate your unique agent ID and start earning up to {commission}% commission.</p>
             </div>
             <form class="agent-apply-form" id="agent-register-form">
               <div class="apply-field">
@@ -315,7 +315,7 @@
                 <input id="apply-ref" type="text" placeholder="e.g. TPS70" />
               </div>
               <div class="apply-submit-wrap">
-                <button type="submit" class="btn-yellow apply-submit-btn">SUBMIT &amp; BECOME AN AGENT</button>
+                <button type="submit" class="btn-yellow apply-submit-btn" data-bind="agentApply.buttonText">SUBMIT &amp; BECOME AN AGENT</button>
               </div>
               <p class="apply-success-msg" id="apply-success-msg" hidden></p>
             </form>

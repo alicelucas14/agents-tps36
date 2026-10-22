@@ -157,8 +157,8 @@ const VOID_TAGS = new Set(['br', 'hr', 'img', 'input', 'meta', 'link', 'source',
 
 // Removed together with everything inside them.
 const DROP_WITH_CONTENT = new Set([
-  'script', 'style', 'iframe', 'noscript', 'svg', 'form', 'button', 'input', 'textarea', 'select',
-  'object', 'embed', 'template', 'head', 'title', 'canvas', 'audio', 'video', 'map', 'nav',
+  'script', 'style', 'noscript', 'svg', 'form', 'button', 'input', 'textarea', 'select',
+  'object', 'embed', 'template', 'head', 'title', 'canvas', 'audio', 'map', 'nav',
 ]);
 
 // Plugin widgets that sit inside post content (table of contents, share buttons, related posts).
@@ -167,11 +167,13 @@ const DROP_BY_CLASS = /\b(ez-toc|lwptoc|sharedaddy|jp-relatedposts|addtoany|elem
 // Everything else is unwrapped (its text stays, the tag goes). These tags are kept, with these attributes.
 const KEEP_TAGS = {
   h2: [], h3: [], h4: [], h5: [], h6: [], p: [], br: [], hr: [], ul: [], ol: ['start'], li: [], blockquote: [],
-  strong: [], b: [], em: [], i: [], u: [], a: ['href', 'target', 'rel', 'title'],
+  strong: [], b: [], em: [], i: [], u: [], s: [], del: [], strike: [], a: ['href', 'target', 'rel', 'title'],
   img: ['src', 'srcset', 'sizes', 'alt', 'width', 'height', 'title'],
+  iframe: ['src', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen', 'title', 'loading'],
+  video: ['src', 'controls', 'poster', 'width', 'height'], source: ['src', 'type'],
   table: [], thead: [], tbody: [], tfoot: [], tr: [], th: ['colspan', 'rowspan', 'scope'], td: ['colspan', 'rowspan'],
-  caption: [], figure: [], figcaption: [], pre: [], code: [], sup: [], sub: [], small: [], del: [], ins: [], mark: [],
-  dl: [], dt: [], dd: [],
+  caption: [], figure: [], figcaption: [], pre: [], code: [], sup: [], sub: [], small: [], ins: [], mark: [],
+  dl: [], dt: [], dd: [], div: [],
 };
 
 const BLOCK_TAGS = new Set(['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'center', 'address', 'details', 'summary', 'fieldset']);
@@ -193,6 +195,11 @@ const isSafeUrl = (url) => {
   if (!value) return false;
   if (/^(https?:|mailto:|tel:)/i.test(value)) return true;
   return !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//');
+};
+
+const isSafeVideoEmbed = (url) => {
+  const value = (url || '').trim();
+  return /^(https?:)?\/\/(www\.)?(youtube\.com\/embed\/|youtube-nocookie\.com\/embed\/|player\.vimeo\.com\/video\/)/i.test(value);
 };
 
 function cleanSrcset(srcset) {
@@ -222,6 +229,7 @@ export function sanitizeHtml(html, { resolveLink = (href) => href } = {}) {
 
   const openTag = (tag, attributes) => {
     if (tag === 'h1') tag = 'h2';
+    if (tag === 'strike' || tag === 'del') tag = 's';
     if (!(tag in KEEP_TAGS)) return { tag, markup: '' };
     let markup = `<${tag}`;
     const allowed = KEEP_TAGS[tag];
@@ -235,6 +243,21 @@ export function sanitizeHtml(html, { resolveLink = (href) => href } = {}) {
       return { tag, markup: `${markup}>` };
     }
 
+    if (tag === 'iframe') {
+      const src = attributes.src;
+      if (!src || !isSafeVideoEmbed(src)) return { tag, markup: '' };
+      markup += attr('src', src.trim());
+      markup += attr('width', attributes.width || '100%');
+      markup += attr('height', attributes.height || '360');
+      markup += ' frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy">';
+      return { tag, markup };
+    }
+
+    if (tag === 'video') {
+      const src = attributes.src && isSafeUrl(attributes.src) ? attr('src', attributes.src.trim()) : '';
+      return { tag, markup: `<video controls${src}>` };
+    }
+
     if (tag === 'img') {
       const src = attributes.src;
       if (!src || !isSafeUrl(src)) return { tag, markup: null };
@@ -245,6 +268,15 @@ export function sanitizeHtml(html, { resolveLink = (href) => href } = {}) {
       markup += attr('alt', attributes.alt || '');
       for (const name of ['width', 'height']) if (/^\d+$/.test(attributes[name] || '')) markup += attr(name, attributes[name]);
       return { tag, markup: `${markup} loading="lazy" decoding="async">` };
+    }
+
+    if (attributes.style && /^text-align:\s*(left|center|right|justify);?$/i.test(attributes.style.trim())) {
+      markup += ` style="${escapeHtml(attributes.style.trim())}"`;
+    } else if (attributes.align && /^(left|center|right|justify)$/i.test(attributes.align)) {
+      markup += ` style="text-align: ${escapeHtml(attributes.align.toLowerCase())};"`;
+    }
+    if (attributes.class === 'video-embed') {
+      markup += ' class="video-embed"';
     }
 
     for (const name of allowed) {
@@ -602,7 +634,7 @@ export function extractChrome(indexHtml) {
 
 const jsonForScript = (value) => JSON.stringify(value).replace(/</g, '\\u003c');
 
-function pageShell({ title, description, canonical, image, type = 'website', graph = [], chrome, body, site = '', siteName = '', noindex = false, published = '', modified = '' }) {
+function pageShell({ title, description, keywords = '', canonical, image, type = 'website', graph = [], chrome, body, site = '', siteName = '', noindex = false, published = '', modified = '' }) {
   // Pages without a picture of their own still get a branded one when shared.
   const usingDefaultImage = !image && Boolean(site);
   const shareImage = asciiUrl(image) || (site ? `${site}${SHARE_IMAGE_PATH}` : '');
@@ -614,7 +646,7 @@ function pageShell({ title, description, canonical, image, type = 'website', gra
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${escapeHtml(title)}</title>
     <meta name="description" content="${escapeHtml(description)}" />
-    <meta name="robots" content="${noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'}" />
+    ${keywords ? `<meta name="keywords" content="${escapeHtml(keywords)}" />\n    ` : ''}<meta name="robots" content="${noindex ? 'noindex, follow' : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1'}" />
     ${canonical ? `<link rel="canonical" href="${escapeHtml(canonical)}" />` : ''}
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
@@ -840,12 +872,16 @@ ${lazyImages(outlineHeadings(post.html))}
     </main>`;
     const description = metaDescription(descriptionSource(post.html, post.title) || post.excerpt || stripTags(post.html));
     const image = asciiUrl(post.image && /^https?:/i.test(post.image.src) ? post.image.src : post.image && site ? `${site}${post.image.src}` : '');
+    const canonical = post.canonicalUrl ? post.canonicalUrl.trim() : url;
+    const keywords = post.keywords ? post.keywords.trim() : (post.tags ? post.tags.join(', ') : '');
+    const schemaType = post.schemaType || 'BlogPosting';
     files.push({
       path: `${POSTS_DIR}/${post.slug}/index.html`,
       content: pageShell({
         title: seoTitle(post.title, siteName),
         description,
-        canonical: url,
+        keywords,
+        canonical,
         image,
         type: 'article',
         site, siteName,
@@ -854,7 +890,7 @@ ${lazyImages(outlineHeadings(post.html))}
         graph: site ? [
           ...siteNodes({ site, siteName, social: chrome.social }),
           {
-            '@type': 'BlogPosting',
+            '@type': schemaType,
             '@id': `${url}#article`,
             headline: clip(post.title, 110),
             description,
@@ -867,7 +903,7 @@ ${lazyImages(outlineHeadings(post.html))}
             image: [image || `${site}${SHARE_IMAGE_PATH}`],
             inLanguage: 'en',
             ...(post.category ? { articleSection: post.category } : {}),
-            ...(post.tags.length ? { keywords: post.tags.join(', ') } : {}),
+            ...(keywords ? { keywords } : {}),
           },
           breadcrumbNode([{ name: 'Home', url: `${site}/` }, { name: title, url: abs(pageUrl(1)) }, { name: clip(post.title, 60), url }]),
         ] : [],
@@ -1206,6 +1242,9 @@ ${lazyImages(outlineHeadings(page.html))}
       </article>
     </main>`;
     const description = metaDescription(page.description || descriptionSource(page.html, page.title) || stripTags(page.html));
+    const canonical = page.canonicalUrl ? page.canonicalUrl.trim() : url;
+    const keywords = page.keywords ? page.keywords.trim() : '';
+    const schemaType = page.schemaType || 'WebPage';
     const crumbs = [
       { name: 'Home', url: `${site}/` },
       ...parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/')).filter((path) => titleByPath.has(path)).map((path) => ({ name: clip(titleByPath.get(path), 40), url: abs(`/${path}/`) })),
@@ -1216,13 +1255,14 @@ ${lazyImages(outlineHeadings(page.html))}
       content: pageShell({
         title: seoTitle(page.title, siteName),
         description,
-        canonical: url,
+        keywords,
+        canonical,
         image: asciiUrl(/^https?:/i.test(page.image) ? page.image : page.image && site ? `${site}${page.image}` : ''),
         site, siteName,
         graph: site ? [
           ...siteNodes({ site, siteName, social: chrome.social }),
           {
-            '@type': 'WebPage',
+            '@type': schemaType,
             '@id': url,
             url,
             name: page.title,

@@ -379,6 +379,57 @@ switch ($action) {
         respond(200, ['ok' => true]);
     }
 
+    case 'upload': {
+        require_user();
+        if (empty($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
+            fail(400, 'No file was uploaded.');
+        }
+        $file = $_FILES['file'];
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            fail(400, 'File upload error code: ' . $file['error']);
+        }
+        if ($file['size'] > 10 * 1024 * 1024) {
+            fail(400, 'Image exceeds maximum allowed size (10 MB).');
+        }
+
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        $allowed = [
+            'image/jpeg' => 'jpg',
+            'image/png'  => 'png',
+            'image/webp' => 'webp',
+            'image/gif'  => 'gif',
+            'image/svg+xml' => 'svg',
+        ];
+        if (!isset($allowed[$mime])) {
+            fail(400, 'Invalid file type. Please upload a JPG, PNG, WebP, GIF, or SVG image.');
+        }
+
+        $ext = $allowed[$mime];
+        $uploadDir = $SITE_DIR . '/uploads';
+        if (!is_dir($uploadDir) && !@mkdir($uploadDir, 0755, true)) {
+            fail(500, 'Could not create /uploads directory on the server.');
+        }
+
+        $cleanOrig = preg_replace('/[^a-zA-Z0-9_-]/', '-', pathinfo($file['name'], PATHINFO_FILENAME));
+        $cleanOrig = substr($cleanOrig ?: 'media', 0, 30);
+        $filename = sprintf('%s-%s-%s.%s', $cleanOrig, gmdate('Ymd'), bin2hex(random_bytes(4)), $ext);
+        $dest = $uploadDir . '/' . $filename;
+
+        if (!@move_uploaded_file($file['tmp_name'], $dest)) {
+            fail(500, 'Could not save uploaded file. Check server folder permissions.');
+        }
+        @chmod($dest, 0644);
+
+        respond(200, [
+            'ok' => true,
+            'url' => '/uploads/' . $filename,
+            'name' => $filename,
+        ]);
+    }
+
     case 'publish': {
         $me = require_user();
         $content = $input['content'] ?? null;

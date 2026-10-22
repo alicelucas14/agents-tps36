@@ -101,6 +101,12 @@ window.SITE_DEFAULTS = {
       { "image": "https://agents.teenpattistars.io/wp-content/uploads/2024/01/output-onlinepngtools-9.webp", "alt": "", "title": "Bonuses and Rewards", "text": "You will earn more with every friend you bring on board! Refer and reap the rewards. Your bonus, your way." }
     ]
   },
+  "agentApply": {
+    "eyebrow": "Instant Agent Registration",
+    "title": "Join the 10,000+ Agent Community",
+    "subtitle": "Fill out your details to activate your unique agent ID and start earning up to {commission}% commission.",
+    "buttonText": "SUBMIT & BECOME AN AGENT"
+  },
   "partners": {
     "title": "Withdrawal Partners",
     "items": [

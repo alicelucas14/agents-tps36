@@ -428,6 +428,22 @@
       ],
     },
     {
+      id: 'apply',
+      label: 'Agent registration',
+      intro: 'The “Instant Agent Registration” form card on the home page.',
+      blocks: [
+        {
+          title: 'Headings & Copy',
+          fields: [
+            { path: 'agentApply.eyebrow', label: 'Eyebrow badge', type: 'text' },
+            { path: 'agentApply.title', label: 'Main heading', type: 'text', wide: true },
+            { path: 'agentApply.subtitle', label: 'Subtitle / description', type: 'textarea', wide: true },
+            { path: 'agentApply.buttonText', label: 'Submit button text', type: 'text' },
+          ],
+        },
+      ],
+    },
+    {
       id: 'partners',
       label: 'Withdrawal partners',
       intro: 'The heading and logos under the hero buttons.',
@@ -1514,15 +1530,52 @@
       toolbar.append(button);
       return button;
     };
+
+    const sep = () => toolbar.append(el('div', 'rich-sep'));
+
     tool('P', 'Normal text', () => run('formatBlock', '<p>'));
-    tool('H2', 'Heading', () => run('formatBlock', '<h2>'));
-    tool('H3', 'Smaller heading', () => run('formatBlock', '<h3>'));
-    tool('H4', 'Small heading', () => run('formatBlock', '<h4>'));
+    tool('H2', 'Heading 2', () => run('formatBlock', '<h2>'));
+    tool('H3', 'Heading 3', () => run('formatBlock', '<h3>'));
+    tool('H4', 'Heading 4', () => run('formatBlock', '<h4>'));
+    sep();
     tool('B', 'Bold', () => run('bold'), 'rich-bold');
     tool('I', 'Italic', () => run('italic'), 'rich-italic');
+    tool('U', 'Underline', () => run('underline'), 'rich-underline');
+    tool('S', 'Strikethrough', () => run('strikeThrough'), 'rich-strike');
+    tool('Code', 'Inline code', () => {
+      const sel = window.getSelection().toString();
+      if (sel) run('insertHTML', `<code>${core.escapeHtml(sel)}</code>`);
+      else run('insertHTML', '<code>code</code>');
+    });
+    sep();
+    tool('Left', 'Align left', () => run('justifyLeft'));
+    tool('Center', 'Align center', () => run('justifyCenter'));
+    tool('Right', 'Align right', () => run('justifyRight'));
+    tool('Justify', 'Justify text', () => run('justifyFull'));
+    sep();
     tool('•', 'Bulleted list', () => run('insertUnorderedList'));
     tool('1.', 'Numbered list', () => run('insertOrderedList'));
-    tool('❝', 'Quote', () => run('formatBlock', '<blockquote>'));
+    tool('❝', 'Quote block', () => run('formatBlock', '<blockquote>'));
+    tool('―', 'Horizontal divider line', () => run('insertHorizontalRule'));
+    sep();
+    tool('Table', 'Insert table', () => {
+      const rowsStr = window.prompt('Number of rows (including header):', '3');
+      if (!rowsStr) return;
+      const colsStr = window.prompt('Number of columns:', '3');
+      if (!colsStr) return;
+      const rows = Math.max(1, Math.min(20, parseInt(rowsStr, 10) || 3));
+      const cols = Math.max(1, Math.min(10, parseInt(colsStr, 10) || 3));
+      let tableHtml = '<table><thead><tr>';
+      for (let c = 1; c <= cols; c += 1) tableHtml += `<th>Header ${c}</th>`;
+      tableHtml += '</tr></thead><tbody>';
+      for (let r = 2; r <= rows; r += 1) {
+        tableHtml += '<tr>';
+        for (let c = 1; c <= cols; c += 1) tableHtml += `<td>Data ${r}-${c}</td>`;
+        tableHtml += '</tr>';
+      }
+      tableHtml += '</tbody></table><p></p>';
+      run('insertHTML', tableHtml);
+    });
     tool('Link', 'Add a link', () => {
       const address = window.prompt('Link address (https://… or a page on this site such as /big-agent-india/):', 'https://');
       if (!address) return;
@@ -1536,14 +1589,70 @@
       }
     });
     tool('Unlink', 'Remove the link', () => run('unlink'));
-    tool('Picture', 'Add a picture', () => {
-      const link = window.prompt('Picture address (https://… or /wp-content/uploads/…):', 'https://');
+    tool('Image URL', 'Insert picture link', () => {
+      const link = window.prompt('Picture address (https://… or /uploads/…):', 'https://');
       if (!link) return;
       const url = safeUrl(link.trim());
       if (!url) { notify('That picture address is not allowed.'); return; }
       const alt = window.prompt('Describe the picture for people who cannot see it:', '') || '';
       run('insertHTML', `<img src="${core.escapeHtml(url)}" alt="${core.escapeHtml(alt)}">`);
     });
+
+    // Upload image directly to server
+    const fileUploadInput = el('input');
+    fileUploadInput.type = 'file';
+    fileUploadInput.accept = 'image/jpeg,image/png,image/webp,image/gif,image/svg+xml';
+    fileUploadInput.hidden = true;
+    fileUploadInput.addEventListener('change', async () => {
+      const file = fileUploadInput.files[0];
+      if (!file) return;
+      fileUploadInput.value = '';
+      notify('Uploading image to server…');
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('api/admin.php?action=upload', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'tps-admin' },
+          body: formData,
+        });
+        const data = await res.json();
+        if (!data.ok || !data.url) throw new Error(data.error || 'Upload failed.');
+        const alt = window.prompt('Describe the uploaded picture (for SEO & screen readers):', file.name.replace(/\.[^.]+$/, '')) || '';
+        run('insertHTML', `<img src="${core.escapeHtml(data.url)}" alt="${core.escapeHtml(alt)}">`);
+        notify('Image uploaded and inserted.');
+      } catch (err) {
+        notify(`Upload error: ${err.message}`);
+      }
+    });
+    toolbar.append(fileUploadInput);
+    tool('Upload', 'Upload image from computer', () => fileUploadInput.click());
+
+    tool('Video', 'Embed YouTube or Vimeo video', () => {
+      const videoUrl = window.prompt('Paste YouTube or Vimeo video link (e.g. https://www.youtube.com/watch?v=... or https://youtu.be/...):', 'https://');
+      if (!videoUrl) return;
+      const trimmed = videoUrl.trim();
+      let embedUrl = '';
+      const ytMatch = trimmed.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+      const vimeoMatch = trimmed.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+      if (ytMatch) {
+        embedUrl = `https://www.youtube.com/embed/${ytMatch[1]}`;
+      } else if (vimeoMatch) {
+        embedUrl = `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+      } else if (/^https?:\/\/.*\.mp4$/i.test(trimmed)) {
+        run('insertHTML', `<video controls src="${core.escapeHtml(trimmed)}" style="max-width:100%;"></video><p></p>`);
+        return;
+      }
+      if (!embedUrl) {
+        notify('Please enter a valid YouTube or Vimeo URL.');
+        return;
+      }
+      run('insertHTML', `<div class="video-embed"><iframe src="${core.escapeHtml(embedUrl)}" width="100%" height="360" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe></div><p></p>`);
+    });
+
+    tool('Tx', 'Clear formatting', () => run('removeFormat'));
+    sep();
     tool('↶', 'Undo', () => run('undo'));
     tool('↷', 'Redo', () => run('redo'));
     const htmlButton = el('button', 'rich-btn rich-html', 'HTML');
@@ -1627,7 +1736,25 @@
     countDescription();
     description.wrap.insertBefore(count, description.wrap.querySelector('.field-msg'));
     const image = plainField({ label: 'Share picture link (optional)', value: page.image || '', type: 'url', hint: 'The picture shown when the page is shared. Left empty, the first picture in the page is used.' });
-    fields.append(title.wrap, address.wrap, description.wrap, image.wrap);
+    const keywords = plainField({ label: 'Focus / SEO Keywords (optional)', value: page.keywords || '', hint: 'Search keywords targeting this page, separated by commas.' });
+    const canonical = plainField({ label: 'Canonical URL (optional)', value: page.canonicalUrl || '', type: 'url', hint: 'Leave empty to use this page\'s standard URL.' });
+
+    const schemaWrap = el('div', 'field');
+    fieldCounter += 1;
+    const sId = `field-${fieldCounter}`;
+    const sLabel = el('label', '', 'Schema Type');
+    sLabel.htmlFor = sId;
+    const sSelect = el('select', 'users-select');
+    sSelect.id = sId;
+    ['WebPage', 'AboutPage', 'ContactPage', 'FAQPage', 'ItemPage'].forEach((st) => {
+      const opt = el('option', '', st);
+      opt.value = st;
+      if ((page.schemaType || 'WebPage') === st) opt.selected = true;
+      sSelect.append(opt);
+    });
+    schemaWrap.append(sLabel, sSelect);
+
+    fields.append(title.wrap, address.wrap, description.wrap, image.wrap, keywords.wrap, canonical.wrap, schemaWrap);
     card.append(fields);
 
     const richEditor = buildRichEditor(core, core.pageSourceHtml(page.html));
@@ -1653,6 +1780,9 @@
         title: title.input.value.trim() || 'Untitled page',
         description: description.input.value.trim() || plain.slice(0, 158),
         image: image.input.value.trim() || (first ? core.decodeEntities(first[1]) : ''),
+        keywords: keywords.input.value.trim(),
+        canonicalUrl: canonical.input.value.trim(),
+        schemaType: sSelect.value,
         date: page.date || now,
         modified: now,
         html,
@@ -2073,8 +2203,38 @@
     const excerpt = plainField({ label: 'Summary for the blog list', value: post.excerpt || '', rows: 3, hint: 'Left empty, the start of the post is used.' });
     const image = plainField({ label: 'Main picture link (optional)', value: (post.image && post.image.src) || '', type: 'url', hint: 'Shown on the blog list and when the post is shared. Left empty, the first picture in the post is used.' });
     const alt = plainField({ label: 'Main picture description', value: (post.image && post.image.alt) || '', hint: 'Describes the picture for people who cannot see it.' });
-    [date, author, category, tags].forEach((field) => field.wrap.classList.remove('wide'));
-    fields.append(title.wrap, address.wrap, date.wrap, author.wrap, category.wrap, tags.wrap, excerpt.wrap, image.wrap, alt.wrap);
+    const keywords = plainField({ label: 'Focus / SEO Keywords (optional)', value: post.keywords || '', hint: 'Keywords targeted by this post, separated by commas.' });
+    const canonical = plainField({ label: 'Canonical URL (optional)', value: post.canonicalUrl || '', type: 'url', hint: 'Link to primary source if published elsewhere.' });
+
+    const postSchemaWrap = el('div', 'field');
+    fieldCounter += 1;
+    const psId = `field-${fieldCounter}`;
+    const psLabel = el('label', '', 'Schema Type');
+    psLabel.htmlFor = psId;
+    const postSchemaSelect = el('select', 'users-select');
+    postSchemaSelect.id = psId;
+    ['BlogPosting', 'Article', 'NewsArticle', 'FAQPage'].forEach((st) => {
+      const opt = el('option', '', st);
+      opt.value = st;
+      if ((post.schemaType || 'BlogPosting') === st) opt.selected = true;
+      postSchemaSelect.append(opt);
+    });
+    postSchemaWrap.append(psLabel, postSchemaSelect);
+
+    const featWrap = el('div', 'field wide');
+    const featLabel = el('label', 'checkbox-label');
+    featLabel.style.display = 'inline-flex';
+    featLabel.style.alignItems = 'center';
+    featLabel.style.gap = '8px';
+    featLabel.style.cursor = 'pointer';
+    const featInput = el('input');
+    featInput.type = 'checkbox';
+    featInput.checked = Boolean(post.featured);
+    featLabel.append(featInput, ' Highlight as Featured Post (pinned to top of blog)');
+    featWrap.append(featLabel);
+
+    [date, author, category, tags, postSchemaWrap].forEach((field) => (field.wrap || field).classList.remove('wide'));
+    fields.append(title.wrap, address.wrap, date.wrap, author.wrap, category.wrap, tags.wrap, excerpt.wrap, image.wrap, alt.wrap, keywords.wrap, canonical.wrap, postSchemaWrap, featWrap);
     card.append(fields);
 
     const richEditor = buildRichEditor(core, core.pageSourceHtml(post.html));
@@ -2105,6 +2265,10 @@
         category: category.input.value.trim() || 'Blog',
         tags: [...new Set(tags.input.value.split(',').map((tag) => tag.trim()).filter(Boolean))],
         author: author.input.value.trim(),
+        keywords: keywords.input.value.trim(),
+        canonicalUrl: canonical.input.value.trim(),
+        schemaType: postSchemaSelect.value,
+        featured: featInput.checked,
       };
     };
 
