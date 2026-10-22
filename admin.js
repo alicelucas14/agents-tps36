@@ -3,9 +3,8 @@
 
   const { merge, clone, safeUrl, DRAFT_KEY } = window.SiteContent;
 
-  const AUTH_KEY = 'tps_admin_auth_v1';
-  const SESSION_KEY = 'tps_admin_unlocked_v1';
-  const MIN_PASSCODE = 8;
+  const API_URL = 'api/admin.php';
+  const MIN_PASSWORD = 8;
 
   const EXPORT_HEADER = [
     '/*',
@@ -38,84 +37,49 @@
     },
   });
   const local = makeStore('localStorage');
-  const session = makeStore('sessionStorage');
 
-  /* ---------- Passcode lock ---------- */
+  /* ---------- Sign in (accounts live on the server, see api/admin.php) ---------- */
 
-  const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  let currentUser = null; // { username, role } of the signed-in admin
+  let adminUsers = [];    // [{ username, role, createdAt }] loaded from the server
 
-  // Plain-http pages have no crypto.subtle, so fall back to a small non-cryptographic hash.
-  function fallbackHash(text) {
-    let h1 = 0xdeadbeef;
-    let h2 = 0x41c6ce57;
-    for (let i = 0; i < text.length; i += 1) {
-      const code = text.charCodeAt(i);
-      h1 = Math.imul(h1 ^ code, 2654435761);
-      h2 = Math.imul(h2 ^ code, 1597334677);
-    }
-    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
-  }
+  const getCurrentUser = () => currentUser || { username: '', role: '' };
 
-  async function digest(text) {
-    if (window.crypto && window.crypto.subtle) {
-      const buffer = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-      return toHex(new Uint8Array(buffer));
-    }
-    return fallbackHash(text);
-  }
-
-  const newSalt = () => toHex(window.crypto.getRandomValues(new Uint8Array(16)));
-
-  const ADMIN_USERS_KEY = 'tps_admin_users_v2';
-  const SESSION_USER_KEY = 'tps_admin_current_user_v1';
-
-  const readAuth = () => {
-    try { return JSON.parse(local.get(AUTH_KEY)); } catch { return null; }
-  };
-
-  function readAdminUsers() {
+  async function api(action, body = {}) {
+    let response;
     try {
-      const raw = local.get(ADMIN_USERS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-
-    const auth = readAuth();
-    if (auth && auth.salt && auth.hash) {
-      const initial = [{
-        username: 'admin',
-        salt: auth.salt,
-        hash: auth.hash,
-        role: 'Super Admin',
-        createdAt: new Date().toISOString()
-      }];
-      local.set(ADMIN_USERS_KEY, JSON.stringify(initial));
-      return initial;
+      response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'tps-admin' },
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new Error('Could not reach the server. Check your internet connection.');
     }
-    return [];
+    let data = null;
+    try { data = await response.json(); } catch { /* not JSON: PHP missing or file not found */ }
+    if (!data) {
+      throw new Error(response.status === 404
+        ? 'api/admin.php was not found on the server.'
+        : 'The server did not run PHP. In aaPanel, set this site\'s PHP version to PHP-83.');
+    }
+    if (!response.ok || !data.ok) {
+      if (response.status === 401 && currentUser && action !== 'login') sessionEnded();
+      const error = new Error(data.error || 'Something went wrong.');
+      error.status = response.status;
+      throw error;
+    }
+    return data;
   }
 
-  function saveAdminUsers(users) {
-    local.set(ADMIN_USERS_KEY, JSON.stringify(users));
-  }
-
-  function getCurrentUser() {
+  async function loadAdminUsers() {
     try {
-      const u = JSON.parse(session.get(SESSION_USER_KEY));
-      if (u && u.username) return u;
-    } catch {}
-    const users = readAdminUsers();
-    return users[0] ? { username: users[0].username, role: users[0].role } : { username: 'admin', role: 'Super Admin' };
-  }
-
-  async function storePasscode(passcode) {
-    const salt = newSalt();
-    const hash = await digest(`${salt}:${passcode}`);
-    return local.set(AUTH_KEY, JSON.stringify({ salt, hash }));
+      adminUsers = (await api('users')).users || [];
+    } catch {
+      adminUsers = [];
+    }
   }
 
   const lock = {
@@ -131,116 +95,80 @@
     error: $('#lock-error'),
     submit: $('#lock-submit'),
   };
-  let failures = 0;
-  let blockedUntil = 0;
 
-  function showLock() {
-    const users = readAdminUsers();
-    const setup = users.length === 0;
+  // setup = true only while the server has no accounts yet; it can never be reached again afterwards.
+  function showLock(setup = false, message = '') {
     $('#app').hidden = true;
     lock.root.hidden = false;
     lock.title.textContent = setup ? 'Create Super Admin account' : 'Admin sign in';
     lock.intro.textContent = setup
-      ? 'Choose a username and password to create the initial Super Admin account.'
+      ? 'No admin accounts exist yet. Create the Super Admin account. This screen will not appear again.'
       : 'Sign in with your admin username and password.';
-    if (lock.user) {
-      lock.user.value = setup ? 'admin' : (users.length === 1 ? users[0].username : '');
-    }
+    lock.user.value = setup ? 'admin' : '';
     lock.pass.value = '';
     lock.confirm.value = '';
+    lock.pass.autocomplete = setup ? 'new-password' : 'current-password';
     lock.confirmRow.hidden = !setup;
     lock.submit.textContent = setup ? 'Create Super Admin' : 'Sign in';
+    lock.submit.disabled = false;
     lock.form.dataset.mode = setup ? 'setup' : 'login';
-    lock.error.textContent = '';
-    if (lock.user && lock.user.value) lock.pass.focus();
-    else if (lock.user) lock.user.focus();
-    else lock.pass.focus();
+    lock.error.textContent = message;
+    if (lock.user.value) lock.pass.focus();
+    else lock.user.focus();
+  }
+
+  function sessionEnded() {
+    currentUser = null;
+    adminUsers = [];
+    showLock(false, 'Your session has ended. Please sign in again. Your draft is still saved.');
   }
 
   lock.form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const username = (lock.user ? lock.user.value : 'admin').trim();
-    const passcode = lock.pass.value;
+    const setup = lock.form.dataset.mode === 'setup';
+    const username = lock.user.value.trim();
+    const password = lock.pass.value;
     lock.error.textContent = '';
 
     if (!username) {
       lock.error.textContent = 'Please enter a username.';
-      if (lock.user) lock.user.focus();
+      lock.user.focus();
       return;
     }
-
-    if (lock.form.dataset.mode === 'setup') {
-      if (passcode.length < 6) {
-        lock.error.textContent = 'Password must be at least 6 characters.';
+    if (setup) {
+      if (password.length < MIN_PASSWORD) {
+        lock.error.textContent = `Password must be at least ${MIN_PASSWORD} characters.`;
         return;
       }
-      if (passcode !== lock.confirm.value) {
+      if (password !== lock.confirm.value) {
         lock.error.textContent = 'Passwords do not match.';
         return;
       }
-      const salt = newSalt();
-      const hash = await digest(`${salt}:${passcode}`);
-      const initialUsers = [{
-        username: username,
-        salt: salt,
-        hash: hash,
-        role: 'Super Admin',
-        createdAt: new Date().toISOString()
-      }];
-      saveAdminUsers(initialUsers);
-      local.set(AUTH_KEY, JSON.stringify({ salt, hash }));
-      session.set(SESSION_USER_KEY, JSON.stringify({ username, role: 'Super Admin' }));
-      unlock();
-      return;
     }
 
-    const wait = Math.ceil((blockedUntil - Date.now()) / 1000);
-    if (wait > 0) {
-      lock.error.textContent = `Too many attempts. Try again in ${wait} seconds.`;
-      return;
-    }
-
-    const users = readAdminUsers();
-    const target = users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-
-    if (target) {
-      const computedHash = await digest(`${target.salt}:${passcode}`);
-      if (computedHash === target.hash) {
-        failures = 0;
-        session.set(SESSION_USER_KEY, JSON.stringify({ username: target.username, role: target.role }));
-        unlock();
+    lock.submit.disabled = true;
+    try {
+      const data = await api(setup ? 'setup' : 'login', { username, password });
+      currentUser = data.user;
+      lock.root.hidden = true;
+      await showApp();
+    } catch (error) {
+      if (setup && error.status === 403) {
+        showLock(false, error.message); // someone already created the Super Admin
         return;
       }
+      lock.error.textContent = error.message;
+      lock.pass.select();
+    } finally {
+      lock.submit.disabled = false;
     }
-
-    // Also support fallback if only password was used for legacy single passcode
-    const legacyAuth = readAuth();
-    if (legacyAuth && (await digest(`${legacyAuth.salt}:${passcode}`)) === legacyAuth.hash) {
-      failures = 0;
-      session.set(SESSION_USER_KEY, JSON.stringify({ username: 'admin', role: 'Super Admin' }));
-      unlock();
-      return;
-    }
-
-    failures += 1;
-    if (failures >= 3) blockedUntil = Date.now() + Math.min(2 ** (failures - 2), 30) * 1000;
-    lock.error.textContent = 'Incorrect username or password.';
-    lock.pass.select();
   });
 
-  function unlock() {
-    session.set(SESSION_KEY, '1');
-    lock.root.hidden = true;
-    showApp();
-  }
-
-  $('#lock-btn').addEventListener('click', () => {
-    session.remove(SESSION_KEY);
-    session.remove(SESSION_USER_KEY);
-    failures = 0;
-    blockedUntil = 0;
-    showLock();
-    lock.error.textContent = 'You have been logged out.';
+  $('#lock-btn').addEventListener('click', async () => {
+    try { await api('logout'); } catch { /* signed out locally either way */ }
+    currentUser = null;
+    adminUsers = [];
+    showLock(false, 'You have been logged out.');
   });
 
   /* ---------- Content model ---------- */
@@ -890,7 +818,29 @@
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notify('Downloaded content.js. Upload it over the one next to index.html to publish.');
+    notify('Downloaded a backup copy of content.js.');
+  }
+
+  let publishing = false;
+  async function publishContent() {
+    if (publishing) return;
+    saveNow();
+    if (!isDirty() && !window.confirm('There are no unpublished changes. Publish the current content again anyway?')) return;
+    if (!window.confirm('Publish these changes to the live site now?')) return;
+    publishing = true;
+    document.querySelectorAll('[data-publish]').forEach((button) => { button.disabled = true; });
+    try {
+      await api('publish', { content: state });
+      window.SITE_DEFAULTS = clone(state); // what's live now; also clears the draft
+      saveNow();
+      try { $('#preview-frame').contentWindow.location.reload(); } catch { /* preview not loaded */ }
+      notify('Published. Your changes are now live on the site.');
+    } catch (error) {
+      notify(`Could not publish: ${error.message}`);
+    } finally {
+      publishing = false;
+      document.querySelectorAll('[data-publish]').forEach((button) => { button.disabled = false; });
+    }
   }
 
   function parseContentFile(text) {
@@ -935,21 +885,17 @@
 
     const publish = el('section', 'card');
     publish.append(el('h3', '', 'Publish your changes'));
-    const note = el('div', 'card-note');
-    note.append('Edits are saved as a draft in this browser only. Visitors see them once you publish:');
-    const steps = el('ol');
-    ['Download content.js below.', 'Upload it to your site, replacing the content.js next to index.html.', 'Reload the site to check it.']
-      .forEach((text) => steps.append(el('li', '', text)));
-    note.append(steps);
-    const download = el('button', 'btn btn-primary', 'Download content.js');
-    download.type = 'button';
-    download.addEventListener('click', exportContent);
-    publish.append(note, download);
+    publish.append(el('p', 'card-note', 'Edits are saved as a draft in this browser until you publish. Publishing updates content.js on the server, so visitors see the changes straight away. The previous version is kept as a backup on the server.'));
+    const publishBtn = el('button', 'btn btn-primary', 'Publish to live site');
+    publishBtn.type = 'button';
+    publishBtn.dataset.publish = '';
+    publishBtn.addEventListener('click', publishContent);
+    publish.append(publishBtn);
     nodes.push(publish);
 
     const backup = el('section', 'card');
     backup.append(el('h3', '', 'Backup & restore'));
-    backup.append(el('p', 'card-note', 'Restore from a content.js you downloaded earlier (a plain .json copy also works), or throw away your draft.'));
+    backup.append(el('p', 'card-note', 'Download a copy of the current content, restore from a content.js you downloaded earlier (a plain .json copy also works), or throw away your draft.'));
     const row = el('div', 'row');
     const file = el('input');
     file.type = 'file';
@@ -959,62 +905,18 @@
       if (file.files[0]) importContent(file.files[0]);
       file.value = '';
     });
+    const download = el('button', 'btn', 'Download content.js');
+    download.type = 'button';
+    download.addEventListener('click', exportContent);
     const importBtn = el('button', 'btn', 'Import file…');
     importBtn.type = 'button';
     importBtn.addEventListener('click', () => file.click());
     const discard = el('button', 'btn btn-danger', 'Discard draft');
     discard.type = 'button';
     discard.addEventListener('click', discardDraft);
-    const exportUsersBtn = el('button', 'btn', 'Download users.json');
-    exportUsersBtn.type = 'button';
-    exportUsersBtn.addEventListener('click', exportUsersJSON);
-    row.append(importBtn, discard, exportUsersBtn, file);
+    row.append(download, importBtn, discard, file);
     backup.append(row);
     nodes.push(backup);
-
-    const pass = el('form', 'card');
-    pass.noValidate = true;
-    pass.append(el('h3', '', 'Change passcode'));
-    const grid = el('div', 'pass-form');
-    const newPass = { label: 'New passcode', autocomplete: 'new-password' };
-    const confirmPass = { label: 'Confirm new passcode', autocomplete: 'new-password' };
-    const inputs = [newPass, confirmPass].map((spec) => {
-      const wrap = el('div', 'field');
-      fieldCounter += 1;
-      const id = `field-${fieldCounter}`;
-      const label = el('label', '', spec.label);
-      label.htmlFor = id;
-      const input = el('input');
-      input.id = id;
-      input.type = 'password';
-      input.autocomplete = spec.autocomplete;
-      wrap.append(label, input);
-      grid.append(wrap);
-      return input;
-    });
-    const message = el('p', 'field-msg');
-    message.setAttribute('role', 'alert');
-    const save = el('button', 'btn', 'Update passcode');
-    save.type = 'submit';
-    const actions = el('div', 'actions');
-    actions.append(message, save);
-    grid.append(actions);
-    pass.append(grid);
-    pass.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      message.textContent = '';
-      if (inputs[0].value.length < MIN_PASSCODE) {
-        message.textContent = `Use at least ${MIN_PASSCODE} characters.`;
-      } else if (inputs[0].value !== inputs[1].value) {
-        message.textContent = 'The two passcodes do not match.';
-      } else if (await storePasscode(inputs[0].value)) {
-        inputs.forEach((input) => { input.value = ''; });
-        notify('Passcode updated.');
-      } else {
-        message.textContent = 'This browser is blocking storage, so the passcode cannot be saved.';
-      }
-    });
-    nodes.push(pass);
 
     return nodes;
   }
@@ -2293,7 +2195,7 @@
   let editingAdminUser = null;
 
   function buildUsers() {
-    const users = readAdminUsers();
+    const users = adminUsers;
     const currentUser = getCurrentUser();
     const isSuperAdmin = currentUser.role === 'Super Admin';
 
@@ -2383,13 +2285,19 @@
       if (isSelf) deleteBtn.title = 'You cannot delete your own account';
       else if (isOnlySuper) deleteBtn.title = 'Cannot delete the only Super Admin';
 
-      deleteBtn.addEventListener('click', () => {
+      deleteBtn.addEventListener('click', async () => {
         if (!window.confirm(`Are you sure you want to delete user "${u.username}"?`)) return;
-        const remaining = users.filter((x) => x.username !== u.username);
-        saveAdminUsers(remaining);
-        renderNav();
-        renderEditor();
-        notify(`User "${u.username}" has been removed.`);
+        deleteBtn.disabled = true;
+        try {
+          await api('user_delete', { username: u.username });
+          await loadAdminUsers();
+          renderNav();
+          renderEditor();
+          notify(`User "${u.username}" has been removed.`);
+        } catch (error) {
+          deleteBtn.disabled = false;
+          notify(`Could not delete: ${error.message}`);
+        }
       });
 
       actionsWrap.append(editBtn, deleteBtn);
@@ -2447,7 +2355,7 @@
       const passInput = el('input');
       passInput.type = 'password';
       passInput.required = editingAdminUser.isNew;
-      passInput.placeholder = editingAdminUser.isNew ? 'At least 6 characters' : 'Leave empty to keep existing password';
+      passInput.placeholder = editingAdminUser.isNew ? `At least ${MIN_PASSWORD} characters` : 'Leave empty to keep existing password';
       passField.append(passInput);
 
       // 3. Role
@@ -2498,50 +2406,38 @@
           return;
         }
 
-        if (editingAdminUser.isNew) {
-          if (users.some((x) => x.username.toLowerCase() === uname)) {
-            errorMsg.textContent = `Username "${uname}" is already taken.`;
-            userInput.focus();
-            return;
-          }
-          if (pwd.length < 6) {
-            errorMsg.textContent = 'Password must be at least 6 characters.';
-            passInput.focus();
-            return;
-          }
-          const salt = newSalt();
-          const hash = await digest(`${salt}:${pwd}`);
-          users.push({
-            username: uname,
-            salt: salt,
-            hash: hash,
-            role: roleSelect.value,
-            createdAt: new Date().toISOString()
-          });
-          saveAdminUsers(users);
-          notify(`User "${uname}" added as ${roleSelect.value}.`);
-        } else {
-          const userIdx = users.findIndex((x) => x.username.toLowerCase() === editingAdminUser.username.toLowerCase());
-          if (userIdx !== -1) {
-            if (pwd) {
-              if (pwd.length < 6) {
-                errorMsg.textContent = 'Password must be at least 6 characters.';
-                passInput.focus();
-                return;
-              }
-              const salt = newSalt();
-              const hash = await digest(`${salt}:${pwd}`);
-              users[userIdx].salt = salt;
-              users[userIdx].hash = hash;
-            }
-            if (isSuperAdmin) {
-              users[userIdx].role = roleSelect.value;
-            }
-            saveAdminUsers(users);
-            notify(`Updated user "${editingAdminUser.username}".`);
-          }
+        if (editingAdminUser.isNew && users.some((x) => x.username.toLowerCase() === uname)) {
+          errorMsg.textContent = `Username "${uname}" is already taken.`;
+          userInput.focus();
+          return;
         }
+        if ((editingAdminUser.isNew || pwd) && pwd.length < MIN_PASSWORD) {
+          errorMsg.textContent = `Password must be at least ${MIN_PASSWORD} characters.`;
+          passInput.focus();
+          return;
+        }
+
+        save.disabled = true;
+        try {
+          await api('user_save', {
+            isNew: Boolean(editingAdminUser.isNew),
+            username: editingAdminUser.isNew ? uname : editingAdminUser.username,
+            password: pwd,
+            role: roleSelect.value,
+          });
+        } catch (error) {
+          save.disabled = false;
+          errorMsg.textContent = error.message;
+          return;
+        }
+        notify(editingAdminUser.isNew
+          ? `User "${uname}" added as ${roleSelect.value}.`
+          : `Updated user "${editingAdminUser.username}".`);
         editingAdminUser = null;
+        await loadAdminUsers();
+        const me = adminUsers.find((x) => x.username === currentUser.username);
+        if (me) currentUser = { username: me.username, role: me.role };
+        $('#user-tag').textContent = `${currentUser.username} (${currentUser.role})`;
         renderNav();
         renderEditor();
       });
@@ -2575,7 +2471,7 @@
           : section.id === 'posts'
             ? postsChangeCount()
             : section.id === 'users'
-              ? readAdminUsers().length
+              ? adminUsers.length
               : 0;
         const button = el('button', 'nav-item', waiting ? `${section.label} (${waiting})` : section.label);
         button.type = 'button';
@@ -2644,7 +2540,7 @@
 
   $('#toggle-preview').addEventListener('click', () => setPreview(app.dataset.preview !== 'on'));
   $('#close-preview').addEventListener('click', () => setPreview(false));
-  $('#export-btn').addEventListener('click', exportContent);
+  $('#export-btn').addEventListener('click', publishContent);
 
   function setPreviewMode(mode) {
     previewMode = mode;
@@ -2664,7 +2560,8 @@
 
   let started = false;
 
-  function showApp() {
+  async function showApp() {
+    await loadAdminUsers();
     app.hidden = false;
     state = window.SiteContent.load();
     pagesDraft = readPagesDraft();
@@ -2689,10 +2586,19 @@
     layoutPreview();
   }
 
-  if (readAuth() && session.get(SESSION_KEY) === '1') {
-    lock.root.hidden = true;
-    showApp();
-  } else {
-    showLock();
-  }
+  // Ask the server whether we're already signed in, or whether the first Super Admin still needs creating.
+  (async () => {
+    try {
+      const status = await api('status');
+      if (status.user) {
+        currentUser = status.user;
+        lock.root.hidden = true;
+        await showApp();
+      } else {
+        showLock(Boolean(status.setup));
+      }
+    } catch (error) {
+      showLock(false, error.message);
+    }
+  })();
 })();
