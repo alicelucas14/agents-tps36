@@ -175,6 +175,12 @@
 
   const SECTIONS = [
     {
+      id: 'dashboard',
+      label: 'Dashboard',
+      custom: 'dashboard',
+      intro: 'Overview of your site metrics, recent blog posts, publishing status, and quick actions.',
+    },
+    {
       id: 'general',
       label: 'General',
       intro: 'Commission figure, download button and search-engine text.',
@@ -605,7 +611,7 @@
   }
 
   let state = null;
-  let activeSection = 'general';
+  let activeSection = 'dashboard';
   let focusKey = null;
   let fieldCounter = 0;
 
@@ -1274,7 +1280,7 @@
       pagesError = error.message || 'Could not load the pages.';
     } finally {
       pagesLoading = false;
-      if (activeSection === 'pages') renderEditor();
+      if (activeSection === 'pages' || activeSection === 'dashboard') renderEditor();
     }
   }
 
@@ -2026,7 +2032,7 @@
       postsError = error.message || 'Could not load the posts.';
     } finally {
       postsLoading = false;
-      if (activeSection === 'posts') renderEditor();
+      if (activeSection === 'posts' || activeSection === 'dashboard') renderEditor();
     }
   }
 
@@ -2686,6 +2692,263 @@
     return [card];
   }
 
+  function buildDashboard() {
+    loadPosts();
+    loadPages();
+    const cur = getCurrentUser();
+    const siteUrl = (state?.seo?.siteUrl || '').replace(/\/+$/, '') || 'https://agents.teenpattistars.io';
+    const totalPosts = postsBase ? postsBase.posts.length : 244;
+    const postChanges = postsChangeCount();
+    const totalPages = pagesBase ? pagesBase.pages.length : 102;
+    const pageChanges = pagesChangeCount();
+    const homeDirty = isDirty();
+    const anyChanges = homeDirty || postChanges > 0 || pageChanges > 0;
+    const esc = (str) => String(str || '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+
+    const nodes = [];
+
+    // 1. Welcome Card
+    const welcomeCard = el('div', 'dash-welcome-card');
+    const welcomeLeft = el('div', 'dash-welcome-left');
+    const roleBadge = cur.role === 'super' ? 'SUPER ADMIN' : 'ADMINISTRATOR';
+    const eyebrow = el('span', 'dash-eyebrow', `TEEN PATTI STARS CMS • ${roleBadge}`);
+    const title = el('h2', 'dash-title', `Welcome back, ${esc(cur.username)}!`);
+    const sub = el('p', 'dash-sub', 'Overview of your agent portal, content publishing status, and platform controls.');
+    welcomeLeft.append(eyebrow, title, sub);
+
+    const welcomeRight = el('div', 'dash-welcome-right');
+    const statusPill = el('div', anyChanges ? 'dash-pill is-dirty' : 'dash-pill is-clean');
+    statusPill.innerHTML = anyChanges
+      ? `<span class="dash-dot yellow"></span> Draft Changes Pending (${(homeDirty ? 1 : 0) + postChanges + pageChanges})`
+      : '<span class="dash-dot green"></span> Live Site Up to Date';
+
+    const visitBtn = el('a', 'btn btn-secondary', 'View Public Site ↗');
+    visitBtn.href = siteUrl;
+    visitBtn.target = '_blank';
+    visitBtn.rel = 'noopener noreferrer';
+
+    welcomeRight.append(statusPill, visitBtn);
+    welcomeCard.append(welcomeLeft, welcomeRight);
+    nodes.push(welcomeCard);
+
+    // 2. Draft Alert Banner (if edits are pending)
+    if (anyChanges) {
+      const alertCard = el('div', 'dash-alert-card');
+      const alertInfo = el('div', 'dash-alert-info');
+      const parts = [];
+      if (homeDirty) parts.push('Homepage copy');
+      if (postChanges) parts.push(`${postChanges} blog post(s)`);
+      if (pageChanges) parts.push(`${pageChanges} standalone page(s)`);
+      alertInfo.innerHTML = `<strong>⚠️ Unpublished changes are waiting.</strong> Changes in: ${parts.join(', ')}.`;
+
+      const pubBtn = el('button', 'btn btn-primary', 'Publish Changes Now');
+      pubBtn.type = 'button';
+      pubBtn.addEventListener('click', () => publishChanges());
+      alertCard.append(alertInfo, pubBtn);
+      nodes.push(alertCard);
+    }
+
+    // 3. Stats Grid
+    const statsGrid = el('div', 'dash-stats-grid');
+
+    const createStatCard = (icon, tag, val, label, foot, onClick) => {
+      const card = el('div', 'dash-stat-card');
+      card.innerHTML = `
+        <div class="stat-head">
+          <span class="stat-icon">${icon}</span>
+          <span class="stat-tag">${tag}</span>
+        </div>
+        <div class="stat-val">${val}</div>
+        <div class="stat-label">${label}</div>
+        <div class="stat-foot">${foot}</div>
+      `;
+      card.addEventListener('click', onClick);
+      return card;
+    };
+
+    const s1 = createStatCard(
+      '📝', 'Articles',
+      postsLoading ? '…' : totalPosts,
+      'Published Articles',
+      postChanges ? `<span class="dash-highlight">${postChanges} in draft</span>` : 'All articles live',
+      () => {
+        activeSection = 'posts';
+        renderNav();
+        renderEditor();
+      }
+    );
+
+    const s2 = createStatCard(
+      '📄', 'Landing Pages',
+      pagesLoading ? '…' : totalPages,
+      'Standalone Pages',
+      pageChanges ? `<span class="dash-highlight">${pageChanges} in draft</span>` : 'Clean SEO permalinks',
+      () => {
+        activeSection = 'pages';
+        renderNav();
+        renderEditor();
+      }
+    );
+
+    const s3 = createStatCard(
+      '💰', 'Rate',
+      `${state?.commission || 70}%`,
+      'Agent Commission',
+      'Maximum payout tier',
+      () => {
+        activeSection = 'general';
+        renderNav();
+        renderEditor();
+      }
+    );
+
+    const s4 = createStatCard(
+      '👥', 'Team',
+      adminUsers ? adminUsers.length : 1,
+      'Admin Accounts',
+      `Logged in as ${cur.role}`,
+      () => {
+        activeSection = 'users';
+        renderNav();
+        renderEditor();
+      }
+    );
+
+    statsGrid.append(s1, s2, s3, s4);
+    nodes.push(statsGrid);
+
+    // 4. Split Grid: Quick Actions + Recent Posts & System Info
+    const splitGrid = el('div', 'dash-split-grid');
+
+    // Quick Actions
+    const leftCol = el('div', 'dash-col');
+    const actionsCard = el('div', 'card dash-actions-card');
+    actionsCard.append(el('h3', 'dash-card-title', '⚡ Quick Actions'));
+
+    const actionsList = el('div', 'dash-actions-grid');
+    const addAction = (icon, actTitle, desc, onClick) => {
+      const a = el('button', 'dash-action-btn');
+      a.type = 'button';
+      a.innerHTML = `
+        <div class="act-icon">${icon}</div>
+        <div class="act-body">
+          <div class="act-title">${actTitle}</div>
+          <div class="act-desc">${desc}</div>
+        </div>
+        <div class="act-arrow">→</div>
+      `;
+      a.addEventListener('click', onClick);
+      actionsList.append(a);
+    };
+
+    addAction('✍️', 'Write New Blog Post', 'Open the TinyMCE editor to write and publish an article', () => {
+      postsView.mode = 'edit';
+      postsView.slug = '';
+      activeSection = 'posts';
+      renderNav();
+      renderEditor();
+    });
+
+    addAction('📄', 'Create Landing Page', 'Add a standalone page with custom permalink and metadata', () => {
+      pagesView.mode = 'edit';
+      pagesView.path = '';
+      activeSection = 'pages';
+      renderNav();
+      renderEditor();
+    });
+
+    addAction('🎨', 'Edit Homepage Content', 'Customize headlines, registration form, banners & FAQs', () => {
+      activeSection = 'hero';
+      renderNav();
+      renderEditor();
+    });
+
+    if (cur.role === 'super') {
+      addAction('👥', 'Manage Admin Accounts', 'Create new team members or update login credentials', () => {
+        activeSection = 'users';
+        renderNav();
+        renderEditor();
+      });
+    }
+
+    addAction('🚀', 'Publish Changes Live', 'Directly push all drafts live onto agents.teenpattistars.io', () => {
+      publishChanges();
+    });
+
+    actionsCard.append(actionsList);
+    leftCol.append(actionsCard);
+
+    // Right Column
+    const rightCol = el('div', 'dash-col');
+
+    // Recent Posts Card
+    const recentCard = el('div', 'card dash-recent-card');
+    const recentHead = el('div', 'dash-card-head');
+    recentHead.append(el('h3', 'dash-card-title', '📰 Recent Blog Articles'));
+
+    const allLink = el('button', 'dash-text-link', 'View all posts →');
+    allLink.type = 'button';
+    allLink.addEventListener('click', () => {
+      postsView.mode = 'list';
+      activeSection = 'posts';
+      renderNav();
+      renderEditor();
+    });
+    recentHead.append(allLink);
+    recentCard.append(recentHead);
+
+    const postsList = el('div', 'dash-posts-list');
+    const allPosts = currentPosts();
+    if (!allPosts || !allPosts.length) {
+      postsList.append(el('p', 'field-hint', 'Loading blog posts…'));
+    } else {
+      allPosts.slice(0, 5).forEach((p) => {
+        const item = el('div', 'dash-post-item');
+        const itemLeft = el('div', 'dash-post-left');
+        const itemTitle = el('div', 'dash-post-title', p.title || 'Untitled post');
+        const itemMeta = el('div', 'dash-post-meta');
+        const cat = p.category || 'Blog';
+        const dateStr = p.date ? p.date.slice(0, 10) : '';
+        itemMeta.innerHTML = `<span class="dash-category-badge">${esc(cat)}</span> • ${dateStr}`;
+        itemLeft.append(itemTitle, itemMeta);
+
+        const editBtn = el('button', 'btn btn-secondary btn-sm', 'Edit');
+        editBtn.type = 'button';
+        editBtn.addEventListener('click', () => {
+          postsView.mode = 'edit';
+          postsView.slug = p.slug;
+          activeSection = 'posts';
+          renderNav();
+          renderEditor();
+        });
+
+        item.append(itemLeft, editBtn);
+        postsList.append(item);
+      });
+    }
+    recentCard.append(postsList);
+
+    // Platform Info Card
+    const sysCard = el('div', 'card dash-sys-card');
+    sysCard.append(el('h3', 'dash-card-title', '🖥️ Platform & Environment'));
+    const sysList = el('div', 'dash-sys-list');
+    sysList.innerHTML = `
+      <div class="dash-sys-row"><span>Domain</span><strong>agents.teenpattistars.io</strong></div>
+      <div class="dash-sys-row"><span>Rich Editor</span><strong>TinyMCE 6 (Word Processor Mode)</strong></div>
+      <div class="dash-sys-row"><span>Image Uploads</span><strong class="green">Enabled (/uploads/)</strong></div>
+      <div class="dash-sys-row"><span>Server Stack</span><strong>Nginx + PHP 8.3 (aaPanel)</strong></div>
+      <div class="dash-sys-row"><span>Access Control</span><strong class="green">Role-based Authentication</strong></div>
+    `;
+    sysCard.append(sysList);
+
+    rightCol.append(recentCard, sysCard);
+
+    splitGrid.append(leftCol, rightCol);
+    nodes.push(splitGrid);
+
+    return nodes;
+  }
+
   /* ---------- Editor shell ---------- */
 
   const editor = $('#editor');
@@ -2694,6 +2957,7 @@
   function renderNav() {
     sidenav.replaceChildren(
       ...SECTIONS.map((section) => {
+        const isDash = section.id === 'dashboard';
         const waiting = section.id === 'pages'
           ? pagesChangeCount()
           : section.id === 'posts'
@@ -2701,7 +2965,8 @@
             : section.id === 'users'
               ? adminUsers.length
               : 0;
-        const button = el('button', 'nav-item', waiting ? `${section.label} (${waiting})` : section.label);
+        const text = isDash ? `📊 ${section.label}` : (waiting ? `${section.label} (${waiting})` : section.label);
+        const button = el('button', `nav-item ${isDash ? 'nav-item-dash' : ''}`.trim(), text);
         button.type = 'button';
         if (section.id === activeSection) button.setAttribute('aria-current', 'page');
         button.addEventListener('click', () => {
@@ -2725,15 +2990,17 @@
     const head = el('header', 'editor-head');
     head.append(el('h2', '', section.label), el('p', '', section.intro));
 
-    const blocks = section.custom === 'pages'
-      ? buildPages()
-      : section.custom === 'posts'
-        ? buildPosts()
-        : section.custom === 'users'
-          ? buildUsers()
-          : section.custom
-            ? buildPublish()
-            : section.blocks.map((block) => (block.list ? buildListBlock(block) : buildFieldsBlock(block)));
+    const blocks = section.custom === 'dashboard'
+      ? buildDashboard()
+      : section.custom === 'pages'
+        ? buildPages()
+        : section.custom === 'posts'
+          ? buildPosts()
+          : section.custom === 'users'
+            ? buildUsers()
+            : section.custom
+              ? buildPublish()
+              : section.blocks.map((block) => (block.list ? buildListBlock(block) : buildFieldsBlock(block)));
     if (section.after === 'blog') blocks.push(...buildBlog());
     editor.replaceChildren(head, ...blocks);
 
@@ -2792,6 +3059,8 @@
   let started = false;
 
   async function showApp() {
+    loadPosts();
+    loadPages();
     await loadAdminUsers();
     app.hidden = false;
     state = window.SiteContent.load();
