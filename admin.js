@@ -1777,13 +1777,13 @@
     card.append(el('h3', '', blank ? 'New page' : 'Edit page'));
     const fields = el('div', 'fields');
     const title = plainField({ label: 'Title', value: page.title });
-    const addressHelp = 'Letters, numbers and hyphens, for example my-new-page. Use games/my-game to put it under an existing page.';
-    const addressHint = (path) => (path ? `This page will be at ${siteUrl || ''}/${path}/` : addressHelp);
+    const addressHelp = 'URL path (for example: my-page or games/my-game).';
+    const addressHint = (path) => (path ? `Live link: ${siteUrl || ''}/${path}/` : addressHelp);
     const address = plainField({
-      label: 'Address',
+      label: 'Page URL Path (Web Address)',
       value: livePath,
       readOnly: published,
-      hint: published ? 'The address of a published page cannot be changed, because visitors and Google already use it.' : addressHint(livePath),
+      hint: published ? 'The web URL of a published page cannot be changed, because visitors and search engines already use it.' : addressHint(livePath),
     });
     const addressPreview = () => {
       if (published) return;
@@ -2231,13 +2231,13 @@
     card.append(el('h3', '', blank ? 'New post' : 'Edit post'));
     const fields = el('div', 'fields');
     const title = plainField({ label: 'Title', value: post.title });
-    const addressHelp = 'Letters, numbers and hyphens, for example my-new-post.';
-    const addressHint = (slug) => (slug ? `This post will be at ${siteUrl}/blogs/${slug}/` : addressHelp);
+    const addressHelp = 'URL slug (letters, numbers and hyphens, for example: how-to-play). Auto-generated from title.';
+    const addressHint = (slug) => (slug ? `Live link: ${siteUrl}/blogs/${slug}/` : addressHelp);
     const address = plainField({
-      label: 'Address',
+      label: 'Post URL Slug (Web Address)',
       value: post.slug,
       readOnly: published,
-      hint: published ? 'The address of a published post cannot be changed, because visitors and Google already use it.' : addressHint(post.slug),
+      hint: published ? 'The web URL of a published post cannot be changed, because visitors and search engines already use it.' : addressHint(post.slug),
     });
     // A new post's address follows its title until someone types an address of their own.
     let addressTyped = Boolean(post.slug);
