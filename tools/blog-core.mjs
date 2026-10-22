@@ -168,6 +168,7 @@ const DROP_BY_CLASS = /\b(ez-toc|lwptoc|sharedaddy|jp-relatedposts|addtoany|elem
 const KEEP_TAGS = {
   h2: [], h3: [], h4: [], h5: [], h6: [], p: [], br: [], hr: [], ul: [], ol: ['start'], li: [], blockquote: [],
   strong: [], b: [], em: [], i: [], u: [], s: [], del: [], strike: [], a: ['href', 'target', 'rel', 'title'],
+  span: [],
   img: ['src', 'srcset', 'sizes', 'alt', 'width', 'height', 'title'],
   iframe: ['src', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen', 'title', 'loading'],
   video: ['src', 'controls', 'poster', 'width', 'height'], source: ['src', 'type'],
@@ -214,6 +215,23 @@ function cleanSrcset(srcset) {
 }
 
 const attr = (name, value) => ` ${name}="${escapeHtml(value)}"`;
+
+function cleanInlineStyle(style) {
+  if (!style || typeof style !== 'string') return '';
+  const allowedProps = /^(color|background-color|text-align|font-size|font-weight|font-style|text-decoration|max-width|width|height|border-collapse|border|padding|margin)$/i;
+  const safeVal = /^[\w\s#%().,-]+$/;
+  return style
+    .split(';')
+    .map((rule) => rule.trim())
+    .filter((rule) => {
+      const colon = rule.indexOf(':');
+      if (colon < 0) return false;
+      const prop = rule.slice(0, colon).trim().toLowerCase();
+      const val = rule.slice(colon + 1).trim();
+      return allowedProps.test(prop) && safeVal.test(val) && !/expression|javascript|url\(/i.test(val);
+    })
+    .join('; ');
+}
 
 /**
  * Keeps a small set of tags and attributes, drops page-builder wrappers, widgets and anything
@@ -270,8 +288,9 @@ export function sanitizeHtml(html, { resolveLink = (href) => href } = {}) {
       return { tag, markup: `${markup} loading="lazy" decoding="async">` };
     }
 
-    if (attributes.style && /^text-align:\s*(left|center|right|justify);?$/i.test(attributes.style.trim())) {
-      markup += ` style="${escapeHtml(attributes.style.trim())}"`;
+    if (attributes.style) {
+      const cleanStyle = cleanInlineStyle(attributes.style);
+      if (cleanStyle) markup += ` style="${escapeHtml(cleanStyle)}"`;
     } else if (attributes.align && /^(left|center|right|justify)$/i.test(attributes.align)) {
       markup += ` style="text-align: ${escapeHtml(attributes.align.toLowerCase())};"`;
     }

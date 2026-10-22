@@ -1428,3 +1428,30 @@ textarea {
     padding: 18px;
   }
 }
+
+/* TinyMCE Dark Integration */
+.tox-tinymce {
+  border: 1px solid var(--line) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25) !important;
+  font-family: inherit !important;
+  overflow: hidden;
+}
+
+.tox .tox-toolbar-overlord,
+.tox .tox-toolbar,
+.tox .tox-toolbar__primary,
+.tox .tox-menubar {
+  background: var(--panel) !important;
+}
+
+.tox .tox-statusbar {
+  background: var(--panel) !important;
+  border-top: 1px solid var(--line) !important;
+}
+
+.tox .tox-mbtn,
+.tox .tox-tbtn {
+  border-radius: 6px !important;
+}
+

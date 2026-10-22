@@ -1497,6 +1497,70 @@
     const contentWrap = el('div', 'field');
     const contentLabel = el('label', '', 'Content');
     contentLabel.htmlFor = contentId;
+
+    if (window.tinymce) {
+      const contentMessage = el('p', 'field-msg');
+      const textarea = el('textarea', 'rich-source');
+      textarea.id = contentId;
+      textarea.value = initialHtml;
+      textarea.style.minHeight = '500px';
+      contentWrap.append(contentLabel, textarea, contentMessage);
+
+      setTimeout(() => {
+        try {
+          tinymce.remove(`#${contentId}`);
+        } catch { /* ignore */ }
+        tinymce.init({
+          selector: `#${contentId}`,
+          plugins: 'advlist autolink lists link image charmap preview anchor searchreplace visualblocks code fullscreen insertdatetime media table wordcount help',
+          menubar: 'file edit view insert format tools table',
+          toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | forecolor backcolor | alignleft aligncenter alignright alignjustify | bullist numlist outdent indent | table link image media | removeformat code fullscreen',
+          skin: 'oxide-dark',
+          content_css: 'dark',
+          height: 600,
+          branding: false,
+          promotion: false,
+          relative_urls: false,
+          remove_script_host: false,
+          convert_urls: false,
+          extended_valid_elements: 'iframe[src|title|width|height|allowfullscreen|frameborder|allow|loading|class|style],video[controls|src|style|width|height|poster],source[src|type],span[style|class]',
+          images_upload_handler: (blobInfo) => new Promise(async (resolve, reject) => {
+            try {
+              const formData = new FormData();
+              formData.append('file', blobInfo.blob(), blobInfo.filename());
+              const res = await fetch('api/admin.php?action=upload', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'tps-admin' },
+                body: formData,
+              });
+              const data = await res.json();
+              if (!data.ok || !data.url) throw new Error(data.error || 'Upload failed.');
+              resolve(data.url);
+            } catch (err) {
+              reject(err.message || 'Image upload failed');
+            }
+          }),
+          setup: (editor) => {
+            editor.on('change input keyup undo redo', () => {
+              editor.save();
+            });
+          },
+        });
+      }, 30);
+
+      return {
+        node: contentWrap,
+        rich: textarea,
+        message: contentMessage,
+        getHtml: () => {
+          const editor = tinymce.get(contentId);
+          if (editor) return editor.getContent();
+          return textarea.value;
+        },
+      };
+    }
+
     const toolbar = el('div', 'rich-toolbar');
     toolbar.setAttribute('role', 'toolbar');
     toolbar.setAttribute('aria-label', 'Text formatting');
@@ -2654,6 +2718,9 @@
   }
 
   function renderEditor() {
+    if (window.tinymce) {
+      try { tinymce.remove(); } catch { /* ignore */ }
+    }
     const section = SECTIONS.find((candidate) => candidate.id === activeSection);
     const head = el('header', 'editor-head');
     head.append(el('h2', '', section.label), el('p', '', section.intro));
