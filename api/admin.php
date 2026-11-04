@@ -401,10 +401,11 @@ switch ($action) {
             'image/png'  => 'png',
             'image/webp' => 'webp',
             'image/gif'  => 'gif',
-            'image/svg+xml' => 'svg',
+            // SVG is deliberately not allowed: an SVG can carry script, and /uploads is on the same
+            // origin as this admin, so opening one would run with the signed-in admin's session.
         ];
         if (!isset($allowed[$mime])) {
-            fail(400, 'Invalid file type. Please upload a JPG, PNG, WebP, GIF, or SVG image.');
+            fail(400, 'Invalid file type. Please upload a JPG, PNG, WebP, or GIF image.');
         }
 
         $ext = $allowed[$mime];

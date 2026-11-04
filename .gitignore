@@ -1,2 +1,5 @@
 # Admin accounts, login attempts and content backups live only on the server.
 api/data/
+
+# Local design experiment, not part of the site. Keep it out of the deploy.
+brewns/

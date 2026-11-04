@@ -1671,7 +1671,7 @@
     // Upload image directly to server
     const fileUploadInput = el('input');
     fileUploadInput.type = 'file';
-    fileUploadInput.accept = 'image/jpeg,image/png,image/webp,image/gif,image/svg+xml';
+    fileUploadInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
     fileUploadInput.hidden = true;
     fileUploadInput.addEventListener('change', async () => {
       const file = fileUploadInput.files[0];
