@@ -1016,7 +1016,9 @@ ${lazyImages(outlineHeadings(post.html))}
 /* ---------- plain pages: WordPress "pages" kept at their old addresses (/big-agent-india/, /teen-patti-games/trx-win-go/ ...) ---------- */
 
 // First folder names this site already uses, so an imported page cannot take them over.
-const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'author', 'tag', 'admin', 'index', 'site-map', 'fonts']);
+// Keep in step with SITE_BLOCKED_ROOTS in api/admin.php, which refuses to publish a page under these.
+const RESERVED_PAGE_ROOTS = new Set([POSTS_DIR, 'tools', 'wp-content', 'author', 'tag', 'admin', 'index', 'site-map', 'fonts',
+  'api', 'uploads', 'wp-admin', 'wp-includes']);
 
 const metaContent = (head, attribute, value) => {
   const tag = head.match(new RegExp(`<meta\\b[^>]*\\b${attribute}=["']${value}["'][^>]*>`, 'i'));

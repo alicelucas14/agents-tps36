@@ -45,15 +45,22 @@
 
   const getCurrentUser = () => currentUser || { username: '', role: '' };
 
-  async function api(action, body = {}) {
+  // `gzip` compresses big uploads (publishing posts and pages), which are mostly HTML and shrink about five times.
+  async function api(action, body = {}, { gzip = false } = {}) {
     let response;
     try {
+      const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'tps-admin' };
+      let payload = JSON.stringify(body);
+      if (gzip && typeof CompressionStream === 'function') {
+        payload = await new Response(new Blob([payload]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+        headers['X-Body-Encoding'] = 'gzip';
+      }
       response = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'tps-admin' },
-        body: JSON.stringify(body),
+        headers,
+        body: payload,
       });
     } catch {
       throw new Error('Could not reach the server. Check your internet connection.');
@@ -843,46 +850,246 @@
     notify('Downloaded a backup copy of content.js.');
   }
 
+  /* ---------- Publishing: homepage copy, blog posts and pages ---------- */
+
   let publishing = false;
-  // Returns true when the homepage content was published, false when it was cancelled or failed.
-  async function publishContent() {
-    if (publishing) return false;
-    saveNow();
-    if (!isDirty() && !window.confirm('There are no unpublished changes. Publish the current content again anyway?')) return false;
-    if (!window.confirm('Publish these changes to the live site now?')) return false;
-    publishing = true;
-    let published = false;
-    document.querySelectorAll('[data-publish]').forEach((button) => { button.disabled = true; });
-    try {
-      await api('publish', { content: state });
-      window.SITE_DEFAULTS = clone(state); // what's live now; also clears the draft
-      saveNow();
-      try { $('#preview-frame').contentWindow.location.reload(); } catch { /* preview not loaded */ }
-      notify('Published. Your changes are now live on the site.');
-      published = true;
-    } catch (error) {
-      notify(`Could not publish: ${error.message}`);
-    } finally {
-      publishing = false;
-      document.querySelectorAll('[data-publish]').forEach((button) => { button.disabled = false; });
+
+  const sha256Hex = async (text) => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  };
+  const utf8Length = (text) => new TextEncoder().encode(text).length;
+
+  // Cuts text into pieces of at most `size` characters, never in the middle of a character that takes two units.
+  function cutIntoPieces(text, size) {
+    const pieces = [];
+    for (let start = 0; start < text.length;) {
+      let end = Math.min(text.length, start + size);
+      const last = text.charCodeAt(end - 1);
+      if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
+      pieces.push(text.slice(start, end));
+      start = end;
     }
-    return published;
+    return pieces.length ? pieces : [''];
   }
 
-  // The dashboard's two publish buttons. Only the homepage copy goes live from the browser. Blog posts and
-  // standalone pages are generated files, so they leave as a .zip (Download button in Posts / Pages) that is
-  // unzipped into the site folder, pushed and pulled. When such drafts exist, take the user to that button.
+  // The files every other file is rebuilt from go last, so an interrupted publish leaves the admin still showing the draft.
+  const SEND_LAST = ['blogs/search.json', 'blogs/sitemap.xml', 'blogs/redirects.txt', 'blogs/redirects.nginx.conf', 'blogs/.manifest.json', 'blogs/posts.json', 'sitemap-pages.xml', 'pages.json'];
+  const sendOrder = (path) => SEND_LAST.indexOf(path) + 1;
+
+  // Puts generated files on the server: it is told a checksum of each, asks for the ones that differ, receives them in
+  // pieces (each checked on arrival), then deletes what was removed. Nothing is changed if the plan step fails.
+  async function sendSiteFiles(files, removePaths, progress) {
+    const hashes = {};
+    for (const file of files) hashes[file.path] = await sha256Hex(file.content);
+    progress('comparing with the live site');
+    const plan = await api('site_plan', { hashes, remove: removePaths });
+    if (plan.blocked.length) {
+      const where = `${plan.blocked.slice(0, 3).join(', ')}${plan.blocked.length > 3 ? ' and more' : ''}`;
+      throw new Error(`the server is not allowed to change ${where}. ${plan.fix}`);
+    }
+
+    const byPath = new Map(files.map((file) => [file.path, file]));
+    const gzip = plan.chunkGzip > 0 && typeof CompressionStream === 'function';
+    const budget = gzip ? plan.chunkGzip : plan.chunk; // bytes of file data per request
+    const pieceChars = Math.floor(budget / 3); // a character is at most three bytes
+    const maxPieces = plan.maxPieces || 400; // per request; many small files could otherwise go over it
+    const queue = [];
+    for (const path of [...plan.need].sort((a, b) => sendOrder(a) - sendOrder(b))) {
+      const file = byPath.get(path);
+      if (!file) continue;
+      const parts = cutIntoPieces(file.content, pieceChars);
+      let offset = 0;
+      parts.forEach((data, index) => {
+        const bytes = utf8Length(data);
+        const last = index === parts.length - 1;
+        queue.push({ path, offset, data, bytes, last, ...(last ? { sha256: hashes[path] } : {}) });
+        offset += bytes;
+      });
+    }
+
+    let sent = 0;
+    let batch = [];
+    let batchBytes = 0;
+    const flush = async () => {
+      if (!batch.length) return;
+      await api('site_write', { chunks: batch.map(({ bytes, ...piece }) => piece) }, { gzip });
+      sent += batch.length;
+      progress(`sending ${sent} of ${queue.length} pieces`);
+      batch = [];
+      batchBytes = 0;
+    };
+    for (const piece of queue) {
+      if (batch.length && (batchBytes + piece.bytes > budget || batch.length >= maxPieces)) await flush();
+      batch.push(piece);
+      batchBytes += piece.bytes;
+    }
+    await flush();
+
+    if (plan.remove.length) {
+      progress('removing deleted files');
+      await api('site_remove', { paths: plan.remove });
+    }
+    return { sent: plan.need.length, unchanged: plan.same, removed: plan.remove.length };
+  }
+
+  async function publishHomepageLive() {
+    await api('publish', { content: state });
+    window.SITE_DEFAULTS = clone(state); // what's live now; also clears the draft
+    saveNow();
+    try { $('#preview-frame').contentWindow.location.reload(); } catch { /* preview not loaded */ }
+  }
+
+  async function publishPostsLive(progress) {
+    const core = await loadBlogCore();
+    const posts = currentPosts();
+    const addedSlugs = Object.keys(postsDraft.added);
+    const files = core.buildBlogFiles(posts, {
+      settings: state.blog,
+      siteUrl: state.seo.siteUrl,
+      chrome: postsChrome,
+      meta: { source: postsBase.source, origin: postsBase.origin, importedAt: postsBase.importedAt },
+      skipRedirects: postsSkipRedirects,
+    });
+    const current = new Set(files.map((file) => file.path));
+
+    // Files of the last publish that this one no longer makes: a removed post, or a list page that is not needed now.
+    let previous = [];
+    try {
+      const response = await fetch('blogs/.manifest.json', { cache: 'no-store' });
+      if (response.ok) previous = await response.json();
+    } catch { /* nothing to compare with */ }
+    const removed = new Set(previous.filter((path) => !current.has(path) && /^blogs\/[^/]+\/index\.html$|^blogs\/page\/\d+\/index\.html$/.test(path)));
+    const slugs = new Set(posts.map((post) => post.slug));
+    postsBase.posts.forEach((post) => { if (!slugs.has(post.slug)) removed.add(`blogs/${post.slug}/index.html`); });
+    removed.delete('blogs/index.html');
+    files.push({ path: 'blogs/.manifest.json', content: JSON.stringify([...current].sort(), null, 1) });
+
+    const result = await sendSiteFiles(files, [...removed], progress);
+    // The server now has exactly this, so it becomes the base and the draft is empty.
+    postsBase = JSON.parse(files.find((file) => file.path === 'blogs/posts.json').content);
+    postsDraft = { edited: {}, added: {}, removed: [] };
+    savePostsDraft();
+    pagesPostSlugs = postsBase.posts.map((post) => post.originalSlug || post.slug).filter(Boolean);
+    return { ...result, urls: addedSlugs.map((slug) => `/blogs/${slug}/`) };
+  }
+
+  async function publishPagesLive(progress) {
+    const core = await loadBlogCore();
+    const pages = currentPages();
+    const addedPaths = Object.keys(pagesDraft.added);
+    const files = core.buildSitePages(pages, {
+      siteUrl: state.seo.siteUrl,
+      chrome: pagesChrome,
+      meta: { source: pagesBase.source, origin: pagesBase.origin, importedAt: pagesBase.importedAt },
+    });
+    const paths = new Set(pages.map(pagePathOf));
+    const removed = pagesBase.pages.map(pagePathOf).filter((path) => !paths.has(path)).map((path) => `${path}/index.html`);
+
+    const result = await sendSiteFiles(files, removed, progress);
+    pagesBase = JSON.parse(files.find((file) => file.path === 'pages.json').content);
+    pagesDraft = { edited: {}, added: {}, removed: [] };
+    savePagesDraft();
+    addedPaths.forEach((path) => postsSkipRedirects.add(path));
+    return { ...result, urls: addedPaths.map((path) => `/${path}/`) };
+  }
+
+  const waitUntil = async (test, ms = 30000) => {
+    const start = Date.now();
+    while (!test() && Date.now() - start < ms) await new Promise((resolve) => window.setTimeout(resolve, 100));
+  };
+
+  // Posts and pages are read from the server the first time their sections open. Make sure that has happened, so a
+  // draft saved in this browser is never skipped.
+  async function loadDrafts() {
+    loadPosts();
+    loadPages();
+    await waitUntil(() => !postsLoading && !pagesLoading);
+    const unread = [];
+    if (!postsBase && local.get(POSTS_DRAFT_KEY)) unread.push('blog post');
+    if (!pagesBase && local.get(PAGES_DRAFT_KEY)) unread.push('page');
+    if (unread.length) throw new Error(`your ${unread.join(' and ')} changes could not be loaded, so nothing was published. Open that section to see why.`);
+  }
+
+  // Visitors' view of the pages that were just added, fetched past every cache.
+  async function pagesNotLive(urls) {
+    const missing = [];
+    for (const url of urls.slice(0, 5)) {
+      try {
+        const response = await fetch(`${url}?live=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) missing.push(url);
+      } catch {
+        missing.push(url);
+      }
+    }
+    return missing;
+  }
+
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+  // Publishes everything that is waiting: homepage copy, blog posts and pages. Returns true when all of it went live.
   async function publishChanges() {
-    const posts = postsChangeCount();
-    const pages = pagesChangeCount();
-    let homePublished = false;
-    if (isDirty() || (!posts && !pages)) homePublished = await publishContent();
-    if (!posts && !pages) return;
-    if (posts) { activeSection = 'posts'; postsView.mode = 'list'; } else { activeSection = 'pages'; pagesView.mode = 'list'; }
-    focusKey = null;
-    renderNav();
-    renderEditor();
-    notify(`${homePublished ? 'Homepage published. ' : ''}Blog posts and pages go live as a .zip: use the Download button here, unzip it into the site folder, then push and pull.`, 10000);
+    if (publishing) {
+      notify('A publish is already running. Please wait for it to finish.');
+      return false;
+    }
+    publishing = true;
+    const buttons = document.querySelectorAll('[data-publish], #export-btn');
+    const lockButtons = (locked) => buttons.forEach((button) => { button.disabled = locked; });
+    lockButtons(true);
+    const done = [];
+    let step = 'checking what is waiting';
+    try {
+      saveNow();
+      notify('Checking what is waiting…', 60000);
+      await loadDrafts();
+      const home = isDirty();
+      const posts = postsChangeCount();
+      const pages = pagesChangeCount();
+      const waiting = [home && 'homepage copy', posts && plural(posts, 'blog post change'), pages && plural(pages, 'page change')].filter(Boolean);
+      const question = waiting.length
+        ? `Publish to the live site now?\n\n${waiting.map((line) => `• ${line}`).join('\n')}`
+        : 'There are no unpublished changes. Publish the current homepage content again anyway?';
+      if (!window.confirm(question)) {
+        notify('Nothing was published.');
+        return false;
+      }
+
+      const progress = (what) => notify(`Publishing ${step}: ${what}…`, 60000);
+      const checks = [];
+      if (home || !waiting.length) {
+        step = 'homepage copy';
+        progress('saving');
+        await publishHomepageLive();
+        done.push('homepage');
+      }
+      if (posts) {
+        step = 'blog posts';
+        const result = await publishPostsLive(progress);
+        done.push(`blog (${plural(result.sent, 'file')} updated${result.removed ? `, ${result.removed} removed` : ''})`);
+        checks.push(...result.urls);
+      }
+      if (pages) {
+        step = 'pages';
+        const result = await publishPagesLive(progress);
+        done.push(`pages (${plural(result.sent, 'file')} updated${result.removed ? `, ${result.removed} removed` : ''})`);
+        checks.push(...result.urls);
+      }
+      // Refresh what is on screen (the "unpublished changes" banner and lists), unless a post or page is open for editing.
+      if (activeSection === 'dashboard' || (activeSection === 'posts' && postsView.mode === 'list') || (activeSection === 'pages' && pagesView.mode === 'list')) renderEditor();
+      renderNav();
+      const missing = await pagesNotLive(checks);
+      notify(missing.length
+        ? `Published ${done.join(' and ')}, but these addresses do not open yet: ${missing.join(', ')}`
+        : `Published ${done.join(' and ')}. It is live on the site now.`, 9000);
+      return !missing.length;
+    } catch (error) {
+      notify(`Could not publish ${step}: ${error.message}${done.length ? ` (Already published: ${done.join(', ')}.)` : ''}`, 14000);
+      return false;
+    } finally {
+      publishing = false;
+      lockButtons(false);
+    }
   }
 
   function parseContentFile(text) {
@@ -927,11 +1134,11 @@
 
     const publish = el('section', 'card');
     publish.append(el('h3', '', 'Publish your changes'));
-    publish.append(el('p', 'card-note', 'Edits are saved as a draft in this browser until you publish. Publishing updates content.js on the server, so visitors see the changes straight away. The previous version is kept as a backup on the server.'));
+    publish.append(el('p', 'card-note', 'Edits are saved as a draft in this browser until you publish. Publishing puts everything that is waiting on the live site: the homepage copy, new and edited blog posts, and pages. Only a Super Admin can publish blog posts and pages. The server keeps backups of what it replaces.'));
     const publishBtn = el('button', 'btn btn-primary', 'Publish to live site');
     publishBtn.type = 'button';
     publishBtn.dataset.publish = '';
-    publishBtn.addEventListener('click', publishContent);
+    publishBtn.addEventListener('click', publishChanges);
     publish.append(publishBtn);
     nodes.push(publish);
 
@@ -1367,10 +1574,14 @@
       if (added) parts.push(`${added} new`);
       if (pagesDraft.removed.length) parts.push(`${pagesDraft.removed.length} removed`);
       draftCard.append(el('h3', '', 'Unpublished page changes'));
-      draftCard.append(el('p', 'card-note', `${parts.join(', ')}, kept in this browser. Download the files, unzip them into your site folder, then push to GitHub and pull on the server.`));
+      draftCard.append(el('p', 'card-note', `${parts.join(', ')}, kept in this browser until you publish. Publishing puts them on the live site straight away.`));
 
       const row = el('div', 'row');
-      const download = el('button', 'btn btn-primary', 'Download pages (.zip)');
+      const publishNow = el('button', 'btn btn-primary', 'Publish to live site');
+      publishNow.type = 'button';
+      publishNow.dataset.publish = '';
+      publishNow.addEventListener('click', publishChanges);
+      const download = el('button', 'btn', 'Download backup (.zip)');
       download.type = 'button';
       download.addEventListener('click', downloadPages);
       const discard = el('button', 'btn btn-danger', 'Discard page changes');
@@ -1381,12 +1592,12 @@
         savePagesDraft();
         renderEditor();
       });
-      row.append(download, discard);
+      row.append(publishNow, download, discard);
       draftCard.append(row);
 
       if (pagesDraft.removed.length) {
         const note = el('div', 'card-note');
-        note.append('Removed pages (their files must also be deleted by hand, because a zip cannot delete files):');
+        note.append('Removed pages (they are deleted from the live site when you publish):');
         const list = el('ul', 'removed-list');
         pagesDraft.removed.forEach((path) => {
           const item = el('li');
@@ -2122,9 +2333,13 @@
       if (added) parts.push(`${added} new`);
       if (postsDraft.removed.length) parts.push(`${postsDraft.removed.length} removed`);
       draftCard.append(el('h3', '', 'Unpublished post changes'));
-      draftCard.append(el('p', 'card-note', `${parts.join(', ')}, kept in this browser. Download the blog files, unzip them into your site folder, then push to GitHub and pull on the server.`));
+      draftCard.append(el('p', 'card-note', `${parts.join(', ')}, kept in this browser until you publish. Publishing puts them on the live site straight away.`));
       const row = el('div', 'row');
-      const download = el('button', 'btn btn-primary', 'Download blog files (.zip)');
+      const publishNow = el('button', 'btn btn-primary', 'Publish to live site');
+      publishNow.type = 'button';
+      publishNow.dataset.publish = '';
+      publishNow.addEventListener('click', publishChanges);
+      const download = el('button', 'btn', 'Download backup (.zip)');
       download.type = 'button';
       download.addEventListener('click', downloadPosts);
       const discard = el('button', 'btn btn-danger', 'Discard post changes');
@@ -2135,11 +2350,11 @@
         savePostsDraft();
         renderEditor();
       });
-      row.append(download, discard);
+      row.append(publishNow, download, discard);
       draftCard.append(row);
       if (postsDraft.removed.length) {
         const note = el('div', 'card-note');
-        note.append('Removed posts (their files must also be deleted by hand, because a zip cannot delete files):');
+        note.append('Removed posts (they are deleted from the live site when you publish):');
         const list = el('ul', 'removed-list');
         postsDraft.removed.forEach((slug) => {
           const item = el('li');
@@ -2861,7 +3076,7 @@
       actionsList.append(a);
     };
 
-    addAction('✍️', 'Write New Blog Post', 'Open the editor to write an article (goes live through the .zip download)', () => {
+    addAction('✍️', 'Write New Blog Post', 'Open the editor to write an article, then publish it live', () => {
       postsView.mode = 'edit';
       postsView.slug = '';
       activeSection = 'posts';
@@ -2891,7 +3106,7 @@
       });
     }
 
-    addAction('🚀', 'Publish Changes Live', 'Publish homepage changes now; posts and pages go out as a .zip', () => {
+    addAction('🚀', 'Publish Changes Live', 'Put the homepage, blog post and page changes on the live site', () => {
       publishChanges();
     });
 
@@ -3058,7 +3273,7 @@
 
   $('#toggle-preview').addEventListener('click', () => setPreview(app.dataset.preview !== 'on'));
   $('#close-preview').addEventListener('click', () => setPreview(false));
-  $('#export-btn').addEventListener('click', publishContent);
+  $('#export-btn').addEventListener('click', publishChanges);
 
   function setPreviewMode(mode) {
     previewMode = mode;

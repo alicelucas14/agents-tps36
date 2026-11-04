@@ -146,6 +146,109 @@ function client_ip(): string
     return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 }
 
+/* ---------- Site files: blog posts and pages published from the admin ---------- */
+
+// The browser builds the blog and page files (the same code as tools/blog.mjs) and sends the ones that changed.
+// Only these exact kinds of files can be written or removed, so this cannot be used to put anything else on the server.
+// Only a Super Admin may do it: the files are HTML served from this site's own address, next to the admin.
+const SITE_ROLE = 'Super Admin';
+const SITE_CHUNK_PLAIN = 600000;   // bytes of file data per request when the browser cannot compress its uploads
+const SITE_CHUNK_GZIP = 3000000;   // ... and when it can (HTML shrinks about 5x, so the request itself stays small)
+const SITE_REQUEST_MAX = 3200000;  // most file data accepted in one request, after unpacking
+const SITE_PIECES_MAX = 400;       // most file pieces accepted in one request
+const SITE_FILE_MAX = 30000000;    // largest single file
+const SITE_BACKUPS_TO_KEEP = 10;
+const SITE_DATA_FILES = [
+    '404.html', 'pages.json', 'sitemap-pages.xml',
+    'blogs/posts.json', 'blogs/search.json', 'blogs/sitemap.xml',
+    'blogs/redirects.txt', 'blogs/redirects.nginx.conf', 'blogs/.manifest.json',
+];
+// First folders that belong to the site itself; a page can never be put in them.
+const SITE_BLOCKED_ROOTS = ['api', 'admin', 'fonts', 'tools', 'uploads', 'wp-content', 'wp-admin', 'wp-includes', 'author', 'tag'];
+
+// Allowed: <page address>/index.html (up to six folders), blogs/index.html, blogs/<post>/index.html,
+// blogs/page/<number>/index.html, and the fixed data files above. Nothing else, and never ".." or a leading "/".
+function site_path_ok($path): bool
+{
+    if (!is_string($path) || strlen($path) > 300) return false;
+    if (in_array($path, SITE_DATA_FILES, true)) return true;
+    if (!preg_match('#^[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*){0,5}/index\.html$#D', $path)) return false;
+    $parts = explode('/', $path);
+    if (in_array($parts[0], SITE_BLOCKED_ROOTS, true)) return false;
+    if ($parts[0] === 'blogs') {
+        $n = count($parts);
+        return $n === 2 || $n === 3 || ($n === 4 && $parts[1] === 'page' && ctype_digit($parts[2]));
+    }
+    return true;
+}
+
+// A file that may be deleted: a page or post folder's index.html (never the blog's own front page).
+function site_remove_ok($path): bool
+{
+    return site_path_ok($path) && substr($path, -11) === '/index.html' && $path !== 'blogs/index.html';
+}
+
+function site_file(string $rel): string
+{
+    global $SITE_DIR;
+    return $SITE_DIR . '/' . $rel;
+}
+
+// The nearest folder that exists for a new file, when the web server user cannot write to it (null when it can).
+function site_unwritable(string $rel): ?string
+{
+    global $SITE_DIR;
+    $dir = dirname(site_file($rel));
+    while (!is_dir($dir)) $dir = dirname($dir);
+    if (is_writable($dir)) return null;
+    $short = ltrim(substr($dir, strlen($SITE_DIR)), '/\\');
+    return $short === '' ? '(site folder)' : $short;
+}
+
+function site_part_file(string $rel): string
+{
+    global $DATA_DIR;
+    return "$DATA_DIR/tmp/" . sha1($rel) . '.part';
+}
+
+// Keeps the last few copies of the two files every other file is rebuilt from, so a bad publish can be undone.
+function site_backup(string $rel): void
+{
+    global $DATA_DIR;
+    if ($rel !== 'blogs/posts.json' && $rel !== 'pages.json') return;
+    $source = site_file($rel);
+    if (!is_file($source)) return;
+    $dir = "$DATA_DIR/backups";
+    if (!is_dir($dir)) @mkdir($dir, 0750, true);
+    $prefix = $rel === 'pages.json' ? 'pages' : 'posts';
+    @copy($source, "$dir/$prefix-" . gmdate('Ymd-His') . '.json');
+    $old = glob("$dir/$prefix-*.json") ?: [];
+    sort($old);
+    foreach (array_slice($old, 0, max(0, count($old) - SITE_BACKUPS_TO_KEEP)) as $file) @unlink($file);
+}
+
+// The command that lets the web server user write the site files. Git refuses to work in a folder owned by another
+// user ("detected dubious ownership"), so the folder is marked safe first and .git itself is left alone. aaPanel's
+// .user.ini is locked against changes, so it is skipped.
+function site_fix_hint(): string
+{
+    global $SITE_DIR;
+    $user = 'www';
+    if (function_exists('posix_geteuid') && function_exists('posix_getpwuid')) {
+        $info = posix_getpwuid(posix_geteuid());
+        if (!empty($info['name'])) $user = $info['name'];
+    }
+    return "On the server run: sudo git config --system --add safe.directory $SITE_DIR && "
+        . "sudo find $SITE_DIR -path '*/.git' -prune -o ! -name .user.ini -exec chown $user:$user {} +  and publish again.";
+}
+
+function require_site_publisher(): array
+{
+    $user = require_user();
+    if ($user['role'] !== SITE_ROLE) fail(403, 'Only a ' . SITE_ROLE . ' can publish blog posts and pages.');
+    return $user;
+}
+
 /* ---------- Session ---------- */
 
 function start_session(): void
@@ -240,7 +343,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail(405, 'Use POST.');
 // Browsers only send this header from our own scripts, which blocks cross-site form posts.
 if (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') !== 'tps-admin') fail(403, 'Bad request.');
 
-$input = json_decode((string) file_get_contents('php://input'), true);
+$raw = (string) file_get_contents('php://input');
+// Large uploads (publishing posts and pages) are sent gzip-compressed. The size cap stops a "zip bomb".
+if (($_SERVER['HTTP_X_BODY_ENCODING'] ?? '') === 'gzip') {
+    $raw = function_exists('gzdecode') ? @gzdecode($raw, SITE_REQUEST_MAX * 2) : false;
+    if ($raw === false) fail(400, 'The server could not read the compressed upload. Please publish again.');
+}
+$input = json_decode($raw, true);
+unset($raw);
 if (!is_array($input)) $input = [];
 $action = (string) ($_GET['action'] ?? '');
 
@@ -429,6 +539,137 @@ switch ($action) {
             'url' => '/uploads/' . $filename,
             'name' => $filename,
         ]);
+    }
+
+    // Step 1 of publishing posts or pages: the browser sends a checksum for every file it built, and the server
+    // answers with the ones it does not already have, so a publish only transfers what changed.
+    case 'site_plan': {
+        require_site_publisher();
+        $hashes = $input['hashes'] ?? null;
+        $remove = $input['remove'] ?? [];
+        if (!is_array($hashes) || !is_array($remove) || count($hashes) > 5000 || count($remove) > 5000) fail(400, 'That publish request is not valid.');
+        $need = [];
+        $blocked = [];
+        $same = 0;
+        foreach ($hashes as $path => $sha) {
+            $path = (string) $path;
+            if (!site_path_ok($path) || !is_string($sha) || !preg_match('/^[a-f0-9]{64}$/', $sha)) fail(400, "Not an allowed file: $path");
+            $file = site_file($path);
+            if (is_file($file) && hash_equals($sha, (string) hash_file('sha256', $file))) {
+                $same++;
+                continue;
+            }
+            $need[] = $path;
+            if (($folder = site_unwritable($path)) !== null) $blocked[] = $folder;
+        }
+        $gone = [];
+        foreach ($remove as $path) {
+            if (!site_remove_ok($path)) fail(400, 'Not an allowed file to remove: ' . (is_string($path) ? $path : '?'));
+            if (!is_file(site_file($path))) continue;
+            $gone[] = $path;
+            if (!is_writable(dirname(site_file($path)))) $blocked[] = dirname($path);
+        }
+        // Pieces left behind by an upload that was interrupted.
+        foreach (glob("$DATA_DIR/tmp/*.part") ?: [] as $part) {
+            if (filemtime($part) < time() - 3600) @unlink($part);
+        }
+        respond(200, [
+            'ok' => true,
+            'need' => $need,
+            'remove' => $gone,
+            'same' => $same,
+            'blocked' => array_values(array_unique($blocked)),
+            'chunk' => SITE_CHUNK_PLAIN,
+            'chunkGzip' => function_exists('gzdecode') ? SITE_CHUNK_GZIP : 0,
+            'maxPieces' => SITE_PIECES_MAX,
+            'fix' => site_fix_hint(),
+        ]);
+    }
+
+    // Step 2: receive files in pieces. Each file is checked against its checksum and only then moved into place in
+    // one step, so a visitor never sees a half-written page.
+    case 'site_write': {
+        require_site_publisher();
+        $chunks = $input['chunks'] ?? null;
+        if (!is_array($chunks) || !$chunks || !array_is_list($chunks) || count($chunks) > SITE_PIECES_MAX) fail(400, 'That publish request is not valid.');
+        $total = 0;
+        foreach ($chunks as $c) $total += is_array($c) ? strlen((string) ($c['data'] ?? '')) : 0;
+        if ($total > SITE_REQUEST_MAX) fail(413, 'That piece of the upload is too large.');
+        $hint = site_fix_hint();
+
+        $written = with_lock(function () use ($chunks, $DATA_DIR, $hint) {
+            if (!is_dir("$DATA_DIR/tmp") && !@mkdir("$DATA_DIR/tmp", 0750, true)) {
+                fail(500, 'The server cannot create api/data/tmp. Make the site folder writable by the web server user (www).');
+            }
+            $done = [];
+            foreach ($chunks as $c) {
+                if (!is_array($c)) fail(400, 'That publish request is not valid.');
+                $path = $c['path'] ?? null;
+                if (!site_path_ok($path)) fail(400, 'Not an allowed file: ' . (is_string($path) ? $path : '?'));
+                $offset = (int) ($c['offset'] ?? 0);
+                $data = (string) ($c['data'] ?? '');
+                $part = site_part_file($path);
+
+                if ($offset === 0) {
+                    if (@file_put_contents($part, $data, LOCK_EX) === false) fail(500, 'The server cannot write to api/data/tmp. Check folder permissions (owner www).');
+                } else {
+                    clearstatcache(true, $part);
+                    if (!is_file($part) || filesize($part) !== $offset) fail(409, "The pieces of $path arrived out of order. Please publish again.");
+                    if (@file_put_contents($part, $data, FILE_APPEND | LOCK_EX) === false) fail(500, 'The server cannot write to api/data/tmp. Check folder permissions (owner www).');
+                }
+                if (empty($c['last'])) continue;
+
+                clearstatcache(true, $part);
+                $sha = (string) ($c['sha256'] ?? '');
+                if (filesize($part) > SITE_FILE_MAX) {
+                    @unlink($part);
+                    fail(413, "$path is too large.");
+                }
+                if (!preg_match('/^[a-f0-9]{64}$/', $sha) || !hash_equals($sha, (string) hash_file('sha256', $part))) {
+                    @unlink($part);
+                    fail(422, "$path did not arrive intact. Please publish again.");
+                }
+                $dest = site_file($path);
+                $dir = dirname($dest);
+                if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+                    @unlink($part);
+                    fail(500, "The server cannot create the folder for $path. $hint");
+                }
+                site_backup($path);
+                if (!@rename($part, $dest)) {
+                    @unlink($part);
+                    fail(500, "The server cannot write $path. $hint");
+                }
+                @chmod($dest, 0644);
+                $done[] = $path;
+            }
+            return $done;
+        });
+        respond(200, ['ok' => true, 'written' => $written]);
+    }
+
+    // Step 3: delete the pages and posts that were removed, and any folder that is left empty.
+    case 'site_remove': {
+        require_site_publisher();
+        $paths = $input['paths'] ?? null;
+        if (!is_array($paths) || count($paths) > 5000) fail(400, 'That publish request is not valid.');
+        $removed = 0;
+        $hint = site_fix_hint();
+        with_lock(function () use ($paths, &$removed, $hint) {
+            foreach ($paths as $path) {
+                if (!site_remove_ok($path)) fail(400, 'Not an allowed file to remove: ' . (is_string($path) ? $path : '?'));
+                $file = site_file($path);
+                if (!is_file($file)) continue;
+                if (!@unlink($file)) fail(500, "The server cannot remove $path. $hint");
+                $removed++;
+                $dir = dirname($path);
+                while ($dir !== '.' && $dir !== '' && $dir !== 'blogs') {
+                    if (!@rmdir(site_file($dir))) break; // not empty (or not ours to remove)
+                    $dir = dirname($dir);
+                }
+            }
+        });
+        respond(200, ['ok' => true, 'removed' => $removed]);
     }
 
     case 'publish': {
