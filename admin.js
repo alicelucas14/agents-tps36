@@ -660,12 +660,12 @@
   };
 
   let toastTimer = 0;
-  function notify(message) {
+  function notify(message, ms = 4000) {
     const toast = $('#toast');
     toast.textContent = message;
     toast.classList.add('show');
     window.clearTimeout(toastTimer);
-    toastTimer = window.setTimeout(() => toast.classList.remove('show'), 4000);
+    toastTimer = window.setTimeout(() => toast.classList.remove('show'), ms);
   }
 
   /* ---------- Form building ---------- */
@@ -844,12 +844,14 @@
   }
 
   let publishing = false;
+  // Returns true when the homepage content was published, false when it was cancelled or failed.
   async function publishContent() {
-    if (publishing) return;
+    if (publishing) return false;
     saveNow();
-    if (!isDirty() && !window.confirm('There are no unpublished changes. Publish the current content again anyway?')) return;
-    if (!window.confirm('Publish these changes to the live site now?')) return;
+    if (!isDirty() && !window.confirm('There are no unpublished changes. Publish the current content again anyway?')) return false;
+    if (!window.confirm('Publish these changes to the live site now?')) return false;
     publishing = true;
+    let published = false;
     document.querySelectorAll('[data-publish]').forEach((button) => { button.disabled = true; });
     try {
       await api('publish', { content: state });
@@ -857,12 +859,30 @@
       saveNow();
       try { $('#preview-frame').contentWindow.location.reload(); } catch { /* preview not loaded */ }
       notify('Published. Your changes are now live on the site.');
+      published = true;
     } catch (error) {
       notify(`Could not publish: ${error.message}`);
     } finally {
       publishing = false;
       document.querySelectorAll('[data-publish]').forEach((button) => { button.disabled = false; });
     }
+    return published;
+  }
+
+  // The dashboard's two publish buttons. Only the homepage copy goes live from the browser. Blog posts and
+  // standalone pages are generated files, so they leave as a .zip (Download button in Posts / Pages) that is
+  // unzipped into the site folder, pushed and pulled. When such drafts exist, take the user to that button.
+  async function publishChanges() {
+    const posts = postsChangeCount();
+    const pages = pagesChangeCount();
+    let homePublished = false;
+    if (isDirty() || (!posts && !pages)) homePublished = await publishContent();
+    if (!posts && !pages) return;
+    if (posts) { activeSection = 'posts'; postsView.mode = 'list'; } else { activeSection = 'pages'; pagesView.mode = 'list'; }
+    focusKey = null;
+    renderNav();
+    renderEditor();
+    notify(`${homePublished ? 'Homepage published. ' : ''}Blog posts and pages go live as a .zip: use the Download button here, unzip it into the site folder, then push and pull.`, 10000);
   }
 
   function parseContentFile(text) {
@@ -2710,7 +2730,7 @@
     // 1. Welcome Card
     const welcomeCard = el('div', 'dash-welcome-card');
     const welcomeLeft = el('div', 'dash-welcome-left');
-    const roleBadge = cur.role === 'super' ? 'SUPER ADMIN' : 'ADMINISTRATOR';
+    const roleBadge = cur.role === 'Super Admin' ? 'SUPER ADMIN' : 'ADMINISTRATOR';
     const eyebrow = el('span', 'dash-eyebrow', `TEEN PATTI STARS CMS • ${roleBadge}`);
     const title = el('h2', 'dash-title', `Welcome back, ${esc(cur.username)}!`);
     const sub = el('p', 'dash-sub', 'Overview of your agent portal, content publishing status, and platform controls.');
@@ -2841,7 +2861,7 @@
       actionsList.append(a);
     };
 
-    addAction('✍️', 'Write New Blog Post', 'Open the TinyMCE editor to write and publish an article', () => {
+    addAction('✍️', 'Write New Blog Post', 'Open the editor to write an article (goes live through the .zip download)', () => {
       postsView.mode = 'edit';
       postsView.slug = '';
       activeSection = 'posts';
@@ -2863,7 +2883,7 @@
       renderEditor();
     });
 
-    if (cur.role === 'super') {
+    if (cur.role === 'Super Admin') {
       addAction('👥', 'Manage Admin Accounts', 'Create new team members or update login credentials', () => {
         activeSection = 'users';
         renderNav();
@@ -2871,7 +2891,7 @@
       });
     }
 
-    addAction('🚀', 'Publish Changes Live', 'Directly push all drafts live onto agents.teenpattistars.io', () => {
+    addAction('🚀', 'Publish Changes Live', 'Publish homepage changes now; posts and pages go out as a .zip', () => {
       publishChanges();
     });
 
