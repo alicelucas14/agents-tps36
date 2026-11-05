@@ -1002,16 +1002,18 @@
     while (!test() && Date.now() - start < ms) await new Promise((resolve) => window.setTimeout(resolve, 100));
   };
 
-  // Posts and pages are read from the server the first time their sections open. Make sure that has happened, so a
-  // draft saved in this browser is never skipped.
+  // Posts and pages are read from the server the first time their sections open. Every publish rebuilds both, so both
+  // must be loaded first: building from a list that is missing would empty the blog or the pages, and quietly
+  // publishing only the homepage would look like a full publish. The server sometimes answers slowly, hence the long wait.
   async function loadDrafts() {
     loadPosts();
     loadPages();
-    await waitUntil(() => !postsLoading && !pagesLoading);
-    const unread = [];
-    if (!postsBase && local.get(POSTS_DRAFT_KEY)) unread.push('blog post');
-    if (!pagesBase && local.get(PAGES_DRAFT_KEY)) unread.push('page');
-    if (unread.length) throw new Error(`your ${unread.join(' and ')} changes could not be loaded, so nothing was published. Open that section to see why.`);
+    await waitUntil(() => !postsLoading && !pagesLoading, 90000);
+    if (postsLoading || pagesLoading) {
+      throw new Error('the blog posts and pages are still loading from the server (it is answering slowly), so nothing was published. Wait a minute and publish again.');
+    }
+    const failed = [!postsBase && `blog posts (${postsError || 'unknown error'})`, !pagesBase && `pages (${pagesError || 'unknown error'})`].filter(Boolean);
+    if (failed.length) throw new Error(`the ${failed.join(' and ')} could not be loaded, so nothing was published. Reload the admin and publish again.`);
   }
 
   // Visitors' view of the pages that were just added, fetched past every cache.
@@ -1044,20 +1046,17 @@
     let step = 'checking what is waiting';
     try {
       saveNow();
-      notify('Checking what is waiting…', 60000);
+      notify('Loading the posts and pages, then checking what is waiting…', 100000);
       await loadDrafts();
       const home = isDirty();
       const posts = postsChangeCount();
       const pages = pagesChangeCount();
       // Posts and pages link to each other and all carry the site header and footer, so every publish rebuilds both
-      // (only the files that come out different are sent). That needs both loaded: building from a list that failed to
-      // load would empty the blog or the pages.
-      const site = Boolean(postsBase && pagesBase);
-      if (!site && (posts || pages)) throw new Error('the posts or pages already on the site could not be loaded, so nothing was published. Open the Posts and Pages sections to see why.');
+      // (only the files that come out different are sent). loadDrafts() made sure both are loaded.
       const waiting = [home && 'homepage copy', posts && plural(posts, 'blog post change'), pages && plural(pages, 'page change')].filter(Boolean);
       const question = waiting.length
-        ? `Publish to the live site now?\n\n${waiting.map((line) => `• ${line}`).join('\n')}${site ? '\n\nEvery blog post and page is rebuilt; only files that changed are sent.' : ''}`
-        : `There are no unpublished changes. Publish again anyway?${site ? ' The homepage is sent again, and every blog post and page is rebuilt with the current design (only files that changed are sent).' : ''}`;
+        ? `Publish to the live site now?\n\n${waiting.map((line) => `• ${line}`).join('\n')}\n\nEvery blog post and page is rebuilt; only files that changed are sent.`
+        : 'There are no unpublished changes. Publish again anyway? The homepage is sent again, and every blog post and page is rebuilt with the current design (only files that changed are sent).';
       if (!window.confirm(question)) {
         notify('Nothing was published.');
         return false;
@@ -1071,16 +1070,14 @@
         await publishHomepageLive();
         done.push('homepage');
       }
-      if (site) {
-        step = 'blog posts';
-        const postResult = await publishPostsLive(progress);
-        done.push(`blog (${plural(postResult.sent, 'file')} updated${postResult.removed ? `, ${postResult.removed} removed` : ''})`);
-        checks.push(...postResult.urls);
-        step = 'pages';
-        const pageResult = await publishPagesLive(progress);
-        done.push(`pages (${plural(pageResult.sent, 'file')} updated${pageResult.removed ? `, ${pageResult.removed} removed` : ''})`);
-        checks.push(...pageResult.urls);
-      }
+      step = 'blog posts';
+      const postResult = await publishPostsLive(progress);
+      done.push(`blog (${plural(postResult.sent, 'file')} updated${postResult.removed ? `, ${postResult.removed} removed` : ''})`);
+      checks.push(...postResult.urls);
+      step = 'pages';
+      const pageResult = await publishPagesLive(progress);
+      done.push(`pages (${plural(pageResult.sent, 'file')} updated${pageResult.removed ? `, ${pageResult.removed} removed` : ''})`);
+      checks.push(...pageResult.urls);
       // Refresh what is on screen (the "unpublished changes" banner and lists), unless a post or page is open for editing.
       if (activeSection === 'dashboard' || (activeSection === 'posts' && postsView.mode === 'list') || (activeSection === 'pages' && pagesView.mode === 'list')) renderEditor();
       renderNav();
@@ -1183,8 +1180,11 @@
   let blogData = null; // { posts, origin, source, importedAt } held in memory until downloaded
   // The file is read as text and run from a blob. A direct import() fails on servers that send .mjs files as a
   // plain download (application/octet-stream), which browsers refuse to run as a script.
-  const loadBlogCore = async () => {
-    if (!blogCore) {
+  // Posts and pages ask for it at the same moment, so they share one download (a failed one is tried again next time).
+  let blogCoreLoading = null;
+  const loadBlogCore = () => {
+    if (blogCore) return Promise.resolve(blogCore);
+    blogCoreLoading ||= (async () => {
       const response = await fetch('tools/blog-core.mjs', { cache: 'no-cache' });
       if (!response.ok) throw new Error('Could not read tools/blog-core.mjs from the site.');
       const url = URL.createObjectURL(new Blob([await response.text()], { type: 'text/javascript' }));
@@ -1193,8 +1193,9 @@
       } finally {
         URL.revokeObjectURL(url);
       }
-    }
-    return blogCore;
+      return blogCore;
+    })().finally(() => { blogCoreLoading = null; });
+    return blogCoreLoading;
   };
 
   const formatWhen = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
