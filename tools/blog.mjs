@@ -313,18 +313,21 @@ Options: --download-images   --out <folder>`);
     console.error('No published posts found, so nothing was written.');
     process.exit(1);
   }
-  const pagePaths = new Set([...((await readSavedPages(outDir))?.pages || []).map(pagePath), ...permalinks]);
-  const files = core.buildBlogFiles(posts, { settings, siteUrl, chrome, meta, skipRedirects: pagePaths });
+  const savedPages = await readSavedPages(outDir);
+  const pagePaths = new Set([...(savedPages?.pages || []).map(pagePath), ...permalinks]);
+  const files = core.buildBlogFiles(posts, { settings, siteUrl, chrome, meta, skipRedirects: pagePaths, sitePages: savedPages?.pages || [] });
   const result = await writeFiles(outDir, files);
   console.log(`Done. ${result.written} files written to ${path.join(outDir, core.POSTS_DIR)}${result.removed ? `, ${result.removed} old files removed` : ''}.`);
   console.log(`Open /${core.POSTS_DIR}/ on your site to see them.`);
 
-  // Imported pages share the header and footer, so they are refreshed along with the blog.
-  const savedPages = await readSavedPages(outDir);
+  // Imported pages share the header and footer, and link to the posts on their topic, so they are refreshed along
+  // with the blog. A page that is no longer built (one folded into a post) has its folder removed.
   if (savedPages?.pages?.length) {
     const meta = { source: savedPages.source, origin: savedPages.origin, importedAt: savedPages.importedAt };
-    await writePageFiles(outDir, core.buildSitePages(savedPages.pages, { siteUrl, chrome, meta }));
-    console.log(`Rebuilt ${savedPages.pages.length} pages.`);
+    const pageFiles = core.buildSitePages(savedPages.pages, { siteUrl, chrome, meta, posts });
+    const pageResult = await writePageFiles(outDir, pageFiles, savedPages.pages.map(pagePath));
+    const built = JSON.parse(pageFiles.find((file) => file.path === 'pages.json').content).pages.length;
+    console.log(`Rebuilt ${built} pages${pageResult.removed ? `, removed ${pageResult.removed} (folded into blog posts)` : ''}.`);
   }
 
   const listed = await writeSitemapIndex(outDir, { siteUrl });

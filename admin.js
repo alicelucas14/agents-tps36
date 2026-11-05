@@ -950,6 +950,7 @@
       chrome: postsChrome,
       meta: { source: postsBase.source, origin: postsBase.origin, importedAt: postsBase.importedAt },
       skipRedirects: postsSkipRedirects,
+      sitePages: currentPages(),
     });
     const current = new Set(files.map((file) => file.path));
 
@@ -982,9 +983,11 @@
       siteUrl: state.seo.siteUrl,
       chrome: pagesChrome,
       meta: { source: pagesBase.source, origin: pagesBase.origin, importedAt: pagesBase.importedAt },
+      posts: currentPosts(),
     });
-    const paths = new Set(pages.map(pagePathOf));
-    const removed = pagesBase.pages.map(pagePathOf).filter((path) => !paths.has(path)).map((path) => `${path}/index.html`);
+    // A page that is not built any more: deleted here, or folded into a blog post (its address now redirects).
+    const built = new Set(files.map((file) => file.path));
+    const removed = pagesBase.pages.map((page) => `${pagePathOf(page)}/index.html`).filter((path) => !built.has(path));
 
     const result = await sendSiteFiles(files, removed, progress);
     pagesBase = JSON.parse(files.find((file) => file.path === 'pages.json').content);
@@ -1046,10 +1049,15 @@
       const home = isDirty();
       const posts = postsChangeCount();
       const pages = pagesChangeCount();
+      // Posts and pages link to each other and all carry the site header and footer, so every publish rebuilds both
+      // (only the files that come out different are sent). That needs both loaded: building from a list that failed to
+      // load would empty the blog or the pages.
+      const site = Boolean(postsBase && pagesBase);
+      if (!site && (posts || pages)) throw new Error('the posts or pages already on the site could not be loaded, so nothing was published. Open the Posts and Pages sections to see why.');
       const waiting = [home && 'homepage copy', posts && plural(posts, 'blog post change'), pages && plural(pages, 'page change')].filter(Boolean);
       const question = waiting.length
-        ? `Publish to the live site now?\n\n${waiting.map((line) => `• ${line}`).join('\n')}`
-        : 'There are no unpublished changes. Publish the current homepage content again anyway?';
+        ? `Publish to the live site now?\n\n${waiting.map((line) => `• ${line}`).join('\n')}${site ? '\n\nEvery blog post and page is rebuilt; only files that changed are sent.' : ''}`
+        : `There are no unpublished changes. Publish again anyway?${site ? ' The homepage is sent again, and every blog post and page is rebuilt with the current design (only files that changed are sent).' : ''}`;
       if (!window.confirm(question)) {
         notify('Nothing was published.');
         return false;
@@ -1063,17 +1071,15 @@
         await publishHomepageLive();
         done.push('homepage');
       }
-      if (posts) {
+      if (site) {
         step = 'blog posts';
-        const result = await publishPostsLive(progress);
-        done.push(`blog (${plural(result.sent, 'file')} updated${result.removed ? `, ${result.removed} removed` : ''})`);
-        checks.push(...result.urls);
-      }
-      if (pages) {
+        const postResult = await publishPostsLive(progress);
+        done.push(`blog (${plural(postResult.sent, 'file')} updated${postResult.removed ? `, ${postResult.removed} removed` : ''})`);
+        checks.push(...postResult.urls);
         step = 'pages';
-        const result = await publishPagesLive(progress);
-        done.push(`pages (${plural(result.sent, 'file')} updated${result.removed ? `, ${result.removed} removed` : ''})`);
-        checks.push(...result.urls);
+        const pageResult = await publishPagesLive(progress);
+        done.push(`pages (${plural(pageResult.sent, 'file')} updated${pageResult.removed ? `, ${pageResult.removed} removed` : ''})`);
+        checks.push(...pageResult.urls);
       }
       // Refresh what is on screen (the "unpublished changes" banner and lists), unless a post or page is open for editing.
       if (activeSection === 'dashboard' || (activeSection === 'posts' && postsView.mode === 'list') || (activeSection === 'pages' && pagesView.mode === 'list')) renderEditor();
@@ -1371,9 +1377,11 @@
         const chrome = core.extractChrome(indexHtml);
         // Addresses that an imported page now owns must not be redirected to the blog.
         let skipRedirects = new Set(core.permalinkIds(indexHtml));
+        let sitePages = [];
         try {
           const pagesResponse = await fetch('pages.json', { cache: 'no-store' });
-          if (pagesResponse.ok) (await pagesResponse.json()).pages.forEach((page) => skipRedirects.add(page.path ?? page.slug));
+          if (pagesResponse.ok) sitePages = (await pagesResponse.json()).pages;
+          sitePages.forEach((page) => skipRedirects.add(page.path ?? page.slug));
         } catch { /* no imported pages */ }
         const files = core.buildBlogFiles(data.posts, {
           settings: state.blog,
@@ -1381,6 +1389,7 @@
           chrome,
           meta: { source: data.source, origin: data.origin, importedAt: data.importedAt },
           skipRedirects,
+          sitePages,
         });
         const url = URL.createObjectURL(core.makeZip(files));
         const link = el('a');
@@ -1539,6 +1548,7 @@
         siteUrl: state.seo.siteUrl,
         chrome: pagesChrome,
         meta: { source: pagesBase.source, origin: pagesBase.origin, importedAt: pagesBase.importedAt },
+        posts: postsBase ? currentPosts() : [],
       });
       if (pagesDraft.removed.length) {
         files.push({
@@ -2098,8 +2108,13 @@
       previewFrame.hidden = !show;
       if (!show) return;
       const draft = draftOf();
-      const built = core.buildSitePages([draft], { siteUrl: state.seo.siteUrl, chrome: pagesChrome }).find((file) => file.path === `${draft.path}/index.html`);
-      previewFrame.srcdoc = built.content.replace('<head>', '<head>\n    <base target="_blank" />');
+      const others = currentPages().filter((entry) => pagePathOf(entry) !== draft.path);
+      const built = core.buildSitePages([...others, draft], { siteUrl: state.seo.siteUrl, chrome: pagesChrome, posts: postsBase ? currentPosts() : [] })
+        .find((file) => file.path === `${draft.path}/index.html`);
+      // A page folded into a blog post is not built any more; its address redirects to the post.
+      previewFrame.srcdoc = built
+        ? built.content.replace('<head>', '<head>\n    <base target="_blank" />')
+        : `<p style="font-family:sans-serif;padding:1em">This page was merged into the blog post /blogs/${core.MOVED_PAGES[draft.path] || ''}/ and its address redirects there. It is removed from the site on the next publish.</p>`;
     });
 
     const save = () => {
@@ -2297,6 +2312,7 @@
         chrome: postsChrome,
         meta: { source: postsBase.source, origin: postsBase.origin, importedAt: postsBase.importedAt },
         skipRedirects: postsSkipRedirects,
+        sitePages: pagesBase ? currentPages() : [],
       });
       if (postsDraft.removed.length) {
         files.push({
@@ -2590,7 +2606,7 @@
       if (!show) return;
       const draft = draftOf();
       const all = [...currentPosts().filter((entry) => entry.slug !== draft.slug && entry.slug !== post.slug), draft].sort(newestFirst);
-      const built = core.buildBlogFiles(all, { settings: state.blog, siteUrl: state.seo.siteUrl, chrome: postsChrome, skipRedirects: postsSkipRedirects })
+      const built = core.buildBlogFiles(all, { settings: state.blog, siteUrl: state.seo.siteUrl, chrome: postsChrome, skipRedirects: postsSkipRedirects, sitePages: pagesBase ? currentPages() : [] })
         .find((file) => file.path === `blogs/${draft.slug}/index.html`);
       previewFrame.srcdoc = built.content.replace('<head>', '<head>\n    <base target="_blank" />');
     });

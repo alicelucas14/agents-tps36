@@ -741,6 +741,80 @@ function relatedPosts(posts, limit = 6) {
   return result;
 }
 
+// Links between blog posts and pages. Without them a game or app page was linked only from its section page and the
+// site map, and Search Console listed most of them as "Crawled - currently not indexed" (checked 2026-11-05).
+// The words of the address are compared (it names the topic; the old titles are full of words such as "A Thrilling
+// Fusion of Tradition and Innovation"), a word few addresses use counting more than one most use (nearly all say
+// "teen-patti"), and a pair needs a score of at least RELATED_MIN_SCORE, so it must share a word specific to the topic.
+// Each page lists its closest posts and those posts list the page back; each page also lists its closest other pages
+// (not its parent or children, which it already links to). Ties are broken by a hash of the two addresses: the same
+// pair always lands the same way, but equal candidates are not always the alphabetically first ones, so the links
+// spread over a group of similar pages (all the rummy apps) instead of piling onto a few.
+const RELATED_MIN_SCORE = 2;
+const pairOrder = (a, b) => {
+  let hash = 2166136261; // FNV-1a
+  for (const char of `${a}|${b}`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0;
+  return hash;
+};
+const LINK_FILLER_WORDS = new Set(('thrilling thrill thrills fusion tradition traditional innovation innovative ultimate unveiling unraveling '
+  + 'exploring explore explored exploration deep dive comprehensive journey world rise rising secrets everything need know '
+  + 'fresh twist era exciting fascinating revolution experience insights intricacies implications popular mastering master '
+  + 'beyond inside depth overview ready where meets classic unique blend enthusiasts review 2024 2025 2026').split(' '));
+
+function linkTerms(address) {
+  const words = String(address).split('/').pop().toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+  return new Set(words.filter((word) => !RELATED_STOP_WORDS.has(word) && !LINK_FILLER_WORDS.has(word)));
+}
+
+export function crossLinks(posts, pages, { postsPerPage = 4, pagesPerPage = 4, guidesPerPost = 4 } = {}) {
+  const items = [
+    ...posts.map((post) => ({ post, key: `post:${post.slug}`, terms: linkTerms(post.slug) })),
+    ...pages.map((page) => ({ page, key: `page:${page.path}`, terms: linkTerms(page.path) })),
+  ];
+  const docFrequency = new Map();
+  items.forEach((item) => item.terms.forEach((term) => docFrequency.set(term, (docFrequency.get(term) || 0) + 1)));
+  const weight = (term) => Math.log(items.length / docFrequency.get(term));
+  const ranked = (item, pool) => pool
+    .map((other) => {
+      let score = 0;
+      other.terms.forEach((term) => { if (item.terms.has(term)) score += weight(term); });
+      return { other, score };
+    })
+    .filter((entry) => entry.score >= RELATED_MIN_SCORE)
+    .sort((a, b) => b.score - a.score || pairOrder(item.key, a.other.key) - pairOrder(item.key, b.other.key) || a.other.key.localeCompare(b.other.key));
+
+  const postItems = items.filter((item) => item.post);
+  const pageItems = items.filter((item) => item.page);
+  const postsForPage = new Map();
+  const pagesForPage = new Map();
+  const guides = new Map(posts.map((post) => [post.slug, []]));
+  for (const item of pageItems) {
+    const path = item.page.path;
+    const family = (other) => other.page.path === path || path.startsWith(`${other.page.path}/`) || other.page.path.startsWith(`${path}/`);
+    const closePosts = ranked(item, postItems).slice(0, postsPerPage);
+    postsForPage.set(path, closePosts.map((entry) => entry.other.post));
+    closePosts.forEach((entry) => guides.get(entry.other.post.slug).push({ page: item.page, score: entry.score, key: item.key }));
+    pagesForPage.set(path, ranked(item, pageItems.filter((other) => !family(other))).slice(0, pagesPerPage).map((entry) => entry.other.page));
+  }
+  const pagesForPost = new Map();
+  guides.forEach((list, slug) => {
+    list.sort((a, b) => b.score - a.score || pairOrder(`post:${slug}`, a.key) - pairOrder(`post:${slug}`, b.key) || a.key.localeCompare(b.key));
+    pagesForPost.set(slug, list.slice(0, guidesPerPost).map((entry) => entry.page));
+  });
+  return { postsForPage, pagesForPage, pagesForPost };
+}
+
+// "Related articles" / "Related guides" lists under a post or page, in the same style as the other link lists.
+function relatedList(id, heading, links, indent) {
+  if (!links.length) return '';
+  return `<section class="page-children" aria-labelledby="${id}">
+${indent}  <h2 id="${id}">${heading}</h2>
+${indent}  <ul>
+${links.map(({ href, title }) => `${indent}    <li><a href="${href}">${escapeHtml(clip(title, 90))}</a></li>`).join('\n')}
+${indent}  </ul>
+${indent}</section>`;
+}
+
 const searchForm = (idSuffix) => `<form class="blog-search" role="search" action="/${POSTS_DIR}/" method="get">
         <label class="visually-hidden" for="blog-search-${idSuffix}">Search articles</label>
         <input id="blog-search-${idSuffix}" type="search" name="s" placeholder="Search articles" autocomplete="off" />
@@ -794,7 +868,22 @@ const LEGACY_GONE = [
   'notte-fluida-l-intrattenimento-dei-casin-online-raccontato-come-una-sessione',
 ];
 
-export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {}, skipRedirects = new Set() }) {
+// Pages folded into the blog post on the same game (2026-11-05). Google indexed only one of each pair and listed the
+// page as "Crawled - currently not indexed". These pages are no longer built (and drop out of pages.json on the next
+// publish); their address answers 301 with the post, and no new page may take it. Page address -> post slug.
+export const MOVED_PAGES = {
+  'teen-patti-games/lucky-lottery': 'lucky-lottery',
+  'teen-patti-games/funky-time-casino-game': 'funky-time-casino-game',
+  'teen-patti-games/play-mega-ball': 'mega-ball-game',
+  'teen-patti-games/bac-bo-dice-for-casino': 'bac-bo-casino',
+  'teen-patti-games/fan-tan-live-the-classic': 'fan-tan-live',
+};
+const isMovedPage = (path) => Object.prototype.hasOwnProperty.call(MOVED_PAGES, path);
+// The pages that get built: every page except those folded into a post.
+const builtPages = (pages) => pages.map((page) => ({ ...page, path: page.path ?? page.slug })).filter((page) => !isMovedPage(page.path));
+
+// `sitePages`: the site's pages (pages.json), so each post can link to the pages on its topic.
+export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {}, skipRedirects = new Set(), sitePages = [] }) {
   const title = settings.title || 'Blogs';
   const perPage = Math.max(1, Math.min(48, Number(settings.perPage) || 9));
   const site = siteUrl.replace(/\/+$/, '');
@@ -844,10 +933,12 @@ export function buildBlogFiles(posts, { settings, siteUrl = '', chrome, siteName
   // Post pages
   const recent = posts.slice(0, 5);
   const relatedBySlug = relatedPosts(posts);
+  const { pagesForPost } = crossLinks(posts, builtPages(sitePages));
   posts.forEach((post, index) => {
     const newer = posts[index - 1];
     const older = posts[index + 1];
     const related = relatedBySlug.get(post.slug) || [];
+    const guides = (pagesForPost.get(post.slug) || []).map((page) => ({ href: `/${page.path}/`, title: page.title }));
     const url = abs(postUrl(post));
     const metaLine = [
       `<time datetime="${escapeHtml(post.date.slice(0, 10))}">${escapeHtml(formatDate(post.date))}</time>`,
@@ -870,6 +961,7 @@ ${lazyImages(outlineHeadings(post.html))}
               ${related.map((r) => `<li><a href="${postUrl(r)}">${escapeHtml(clip(r.title, 90))}</a></li>`).join('\n              ')}
             </ul>
           </section>` : ''}
+          ${relatedList('related-guides-title', 'Related guides', guides, '          ')}
           <nav class="post-nav" aria-label="More posts">
             ${older ? `<a class="post-nav-older" rel="prev" href="${postUrl(older)}"><span>← Older</span>${escapeHtml(older.title)}</a>` : '<span></span>'}
             ${newer ? `<a class="post-nav-newer" rel="next" href="${postUrl(newer)}"><span>Newer →</span>${escapeHtml(newer.title)}</a>` : '<span></span>'}
@@ -956,12 +1048,16 @@ ${lazyImages(outlineHeadings(post.html))}
   const legacyMoved = Object.entries(LEGACY_MOVED)
     .map(([old, slug]) => [old, posts.find((p) => p.slug === slug)])
     .filter(([, post]) => post);
+  const movedPages = Object.entries(MOVED_PAGES)
+    .map(([path, slug]) => [path, posts.find((p) => p.slug === slug)])
+    .filter(([, post]) => post);
   files.push({
     path: `${POSTS_DIR}/redirects.txt`,
     content: `# Old WordPress address -> new page (permanent redirect). Works as a Netlify _redirects file;\n# for Apache or nginx, turn each line into a 301 rule.\n${posts
       .filter((p) => p.originalSlug && !skipRedirects.has(p.originalSlug))
       .map((p) => `/${p.originalSlug}/ ${postUrl(p)} 301`)
       .concat(legacyMoved.map(([old, post]) => `/${old}/ ${postUrl(post)} 301`))
+      .concat(movedPages.map(([path, post]) => `/${path}/ ${postUrl(post)} 301`))
       .join('\n')}\n`,
   });
 
@@ -1001,6 +1097,8 @@ ${lazyImages(outlineHeadings(post.html))}
       ...groups.map((names) => `location ~ "^/(${names.join('|')})/?$" { return 301 /${POSTS_DIR}/$1/; }`),
       ...renamed.map((p) => `location = /${p.originalSlug}/ { return 301 ${postUrl(p)}; }`),
       ...legacyMoved.map(([old, post]) => `location = /${old}/ { return 301 ${postUrl(post)}; }`),
+      ...(movedPages.length ? ['# Pages folded into the blog post on the same game (with or without the closing slash)'] : []),
+      ...movedPages.map(([path, post]) => `location ~ "^/${regexSafe(path)}/?$" { return 301 ${postUrl(post)}; }`),
       ...LEGACY_GONE.map((old) => `location = /${old}/ { return 410; }`),
       '# WordPress listed every post under this category page, and had a page per month (/2024/05/), per author (/author/name/) and per tag (/tag/name/)',
       `location ~ "^/category/blog/?$" { return 301 /${POSTS_DIR}/; }`,
@@ -1138,6 +1236,7 @@ export function pageAddressProblem(path, { pages = [], postSlugs = [], reservedR
   if (path.split('/').length > 3) return 'Use at most three parts, for example games/new-game.';
   const root = path.split('/')[0];
   if (new Set([...RESERVED_PAGE_ROOTS, ...reservedRoots]).has(root)) return `"${root}" is already used by the site. Choose another name.`;
+  if (isMovedPage(path)) return 'This address now redirects to a blog post on the same game. Choose another name.';
   if (path !== self && pages.some((page) => (page.path ?? page.slug) === path)) return 'A page with this address already exists.';
   if (!path.includes('/') && postSlugs.includes(path)) return 'An old blog post used this address, and it redirects to the blog. Choose another name.';
   return '';
@@ -1220,12 +1319,14 @@ export function preparePages(rawPages, { origin = '', postSlugs = [], skipped = 
   });
 }
 
-export function buildSitePages(rawPages, { siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {} }) {
-  const pages = rawPages.map((page) => ({ ...page, path: page.path ?? page.slug }));
+// `posts`: the blog posts (blogs/posts.json), so each page can link to the posts on its topic.
+export function buildSitePages(rawPages, { siteUrl = '', chrome, siteName = 'Teen Patti Stars', meta = {}, posts = [] }) {
+  const pages = builtPages(rawPages);
   const site = siteUrl.replace(/\/+$/, '');
   const abs = (path) => (site ? `${site}${path}` : '');
   const titleByPath = new Map(pages.map((page) => [page.path, page.title]));
   const files = [];
+  const { postsForPage, pagesForPage } = crossLinks(posts, pages);
 
   // A page that other pages live under (/teen-patti-games/ and /teen-patti-games/trx-win-go/) links to each of them,
   // so none of them is reachable only from the sitemap.
@@ -1253,13 +1354,19 @@ export function buildSitePages(rawPages, { siteUrl = '', chrome, siteName = 'Tee
           </ul>
         </section>`
       : '';
+    const articles = (postsForPage.get(page.path) || []).map((post) => ({ href: postUrl(post), title: post.title }));
+    const guides = (pagesForPage.get(page.path) || []).map((other) => ({ href: `/${other.path}/`, title: other.title }));
+    const related = [
+      relatedList('related-posts-title', 'Related articles', articles, '        '),
+      relatedList('related-guides-title', 'Related guides', guides, '        '),
+    ].filter(Boolean).map((section) => `\n        ${section}`).join('');
     const body = `    <main class="blog-main">
       <article class="post page-article">
         <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">›</span>${parents}<span aria-current="page">${escapeHtml(clip(page.title, 60))}</span></nav>
         <h1 class="post-title">${escapeHtml(page.title)}</h1>
         <div class="post-content">
 ${lazyImages(outlineHeadings(page.html))}
-        </div>${more}
+        </div>${more}${related}
       </article>
     </main>`;
     const description = metaDescription(page.description || descriptionSource(page.html, page.title) || stripTags(page.html));
