@@ -150,8 +150,9 @@ function client_ip(): string
 
 // The browser builds the blog and page files (the same code as tools/blog.mjs) and sends the ones that changed.
 // Only these exact kinds of files can be written or removed, so this cannot be used to put anything else on the server.
-// Only a Super Admin may do it: the files are HTML served from this site's own address, next to the admin.
-const SITE_ROLE = 'Super Admin';
+// Every admin role may do it (Editors included, by the site owner's choice). The files are HTML served from this
+// site's own address, next to the admin, so anyone given an account is trusted with what visitors' browsers run.
+const SITE_ROLES = ROLES;
 const SITE_CHUNK_PLAIN = 600000;   // bytes of file data per request when the browser cannot compress its uploads
 const SITE_CHUNK_GZIP = 3000000;   // ... and when it can (HTML shrinks about 5x, so the request itself stays small)
 const SITE_REQUEST_MAX = 3200000;  // most file data accepted in one request, after unpacking
@@ -245,7 +246,7 @@ function site_fix_hint(): string
 function require_site_publisher(): array
 {
     $user = require_user();
-    if ($user['role'] !== SITE_ROLE) fail(403, 'Only a ' . SITE_ROLE . ' can publish blog posts and pages.');
+    if (!in_array($user['role'], SITE_ROLES, true)) fail(403, 'Your account is not allowed to publish blog posts and pages.');
     return $user;
 }
 

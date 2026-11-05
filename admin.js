@@ -1134,7 +1134,7 @@
 
     const publish = el('section', 'card');
     publish.append(el('h3', '', 'Publish your changes'));
-    publish.append(el('p', 'card-note', 'Edits are saved as a draft in this browser until you publish. Publishing puts everything that is waiting on the live site: the homepage copy, new and edited blog posts, and pages. Only a Super Admin can publish blog posts and pages. The server keeps backups of what it replaces.'));
+    publish.append(el('p', 'card-note', 'Edits are saved as a draft in this browser until you publish. Publishing puts everything that is waiting on the live site: the homepage copy, new and edited blog posts, and pages. Editors and Super Admins can both publish. The server keeps backups of what it replaces.'));
     const publishBtn = el('button', 'btn btn-primary', 'Publish to live site');
     publishBtn.type = 'button';
     publishBtn.dataset.publish = '';
