@@ -1,3 +1,35 @@
+// Google Analytics 4 (property "Teen Patti Stars Agents", stream "Agency", agents.teenpattistars.io).
+// Every public page loads this script and admin.html does not, so this is the only place the ID lives.
+// It sits in its own block so a failure in the page code below cannot stop it. gtag.js itself is only
+// requested once the page has finished loading, so it never competes with the page's own content;
+// the page view is recorded as soon as it arrives.
+(() => {
+  const GA_ID = 'G-921DPXFB4H';
+  const host = location.hostname;
+  // Not counted: the admin's preview frames, a copy of the site on this computer, a file opened from disk.
+  if (window.top !== window.self || location.protocol === 'file:'
+    || host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return;
+
+  window.dataLayer = window.dataLayer || [];
+  // gtag must push the `arguments` object itself, not an array, so this has to be a plain function.
+  window.gtag = function () { window.dataLayer.push(arguments); };
+  window.gtag('js', new Date());
+  window.gtag('config', GA_ID);
+
+  const start = () => {
+    const tag = document.createElement('script');
+    tag.async = true;
+    tag.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
+    document.head.appendChild(tag);
+  };
+  const afterLoad = () => {
+    if ('requestIdleCallback' in window) window.requestIdleCallback(start, { timeout: 3000 });
+    else setTimeout(start, 1);
+  };
+  if (document.readyState === 'complete') afterLoad();
+  else window.addEventListener('load', afterLoad, { once: true });
+})();
+
 document.addEventListener('DOMContentLoaded', () => {
   const { load, safeUrl, format, DRAFT_KEY } = window.SiteContent;
 
