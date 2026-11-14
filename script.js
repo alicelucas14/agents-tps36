@@ -1,13 +1,13 @@
-// Google Analytics 4 (property "Teen Patti Stars Agents", stream "Agency", agents.teenpattistars.io).
-// Every public page loads this script and admin.html does not, so this is the only place the ID lives.
-// It sits in its own block so a failure in the page code below cannot stop it. gtag.js itself is only
-// requested once the page has finished loading, so it never competes with the page's own content;
-// the page view is recorded as soon as it arrives.
+// Google Analytics 4. The Measurement ID is a published setting (admin → General → Google Analytics);
+// content-lib.js supplies it, already checked, and an empty one switches analytics off. Every public page
+// loads this script and admin.html does not. It sits in its own block so a failure in the page code below
+// cannot stop it. gtag.js itself is only requested once the page has finished loading, so it never competes
+// with the page's own content; the page view is recorded as soon as it arrives.
 (() => {
-  const GA_ID = 'G-921DPXFB4H';
+  const GA_ID = window.SiteContent && window.SiteContent.analyticsId ? window.SiteContent.analyticsId() : '';
   const host = location.hostname;
-  // Not counted: the admin's preview frames, a copy of the site on this computer, a file opened from disk.
-  if (window.top !== window.self || location.protocol === 'file:'
+  // Not counted: no ID set, the admin's preview frames, a copy of the site on this computer, a file opened from disk.
+  if (!GA_ID || window.top !== window.self || location.protocol === 'file:'
     || host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) return;
 
   window.dataLayer = window.dataLayer || [];

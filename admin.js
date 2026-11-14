@@ -3,6 +3,10 @@
 
   const { merge, clone, safeUrl, DRAFT_KEY } = window.SiteContent;
 
+  // Add any setting the published content.js does not have yet (see ADDED in content-lib.js), so the form
+  // can edit it and "unpublished changes" is not reported just because the file on the server is older.
+  window.SITE_DEFAULTS = window.SiteContent.complete(window.SITE_DEFAULTS);
+
   const API_URL = 'api/admin.php';
   const MIN_PASSWORD = 8;
 
@@ -190,7 +194,7 @@
     {
       id: 'general',
       label: 'General',
-      intro: 'Commission figure, download button and search-engine text.',
+      intro: 'Commission figure, download button, search-engine text and Google Analytics.',
       blocks: [
         {
           title: 'Commission',
@@ -216,6 +220,17 @@
             {
               path: 'seo.siteUrl', label: 'Site address', type: 'url', wide: true,
               hint: 'The full web address of this site. Blog pages use it for search-engine links and the sitemap.',
+            },
+          ],
+        },
+        {
+          title: 'Google Analytics',
+          fields: [
+            {
+              path: 'analytics.measurementId', label: 'GA4 Measurement ID', type: 'text',
+              pattern: window.SiteContent.GA_ID, upper: true,
+              patternMessage: 'A Measurement ID looks like G-ABC123DEF4.',
+              hint: 'In Google Analytics: Admin → Data streams → your stream. Leave empty to turn analytics off. Visitors switch to a new ID after you press Publish (browsers that cached the old file can take a few hours).',
             },
           ],
         },
@@ -691,6 +706,11 @@
         return { error: 'Use a link that starts with https:// (or a path on this site).' };
       }
       return { value: trimmed };
+    }
+    if (field.pattern) {
+      const text = field.upper ? value.trim().toUpperCase() : value.trim();
+      if (text && !field.pattern.test(text)) return { error: field.patternMessage };
+      return { value: text };
     }
     return { value };
   }

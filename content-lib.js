@@ -38,6 +38,40 @@
     return base;
   }
 
+  // Settings added after content.js was first published. The copy on the server is written by the admin's
+  // Publish button, so it only gains a new setting at the next Publish; until then these values fill the gap.
+  // (Do not add them to content.js in git: the server's copy differs and its `git pull` would conflict.)
+  var ADDED = {
+    analytics: { measurementId: 'G-921DPXFB4H' }
+  };
+
+  // A Google Analytics 4 Measurement ID. Checked before it is ever put into a script address.
+  var GA_ID = /^G-[A-Z0-9]{4,20}$/;
+
+  function fill(target, extra) {
+    Object.keys(extra).forEach(function (key) {
+      if (isPlainObject(extra[key]) && isPlainObject(target[key])) fill(target[key], extra[key]);
+      else if (!(key in target)) target[key] = clone(extra[key]);
+    });
+    return target;
+  }
+
+  // The published content plus any setting from ADDED that it does not have yet.
+  function complete(published) {
+    return fill(clone(published), ADDED);
+  }
+
+  // The Measurement ID visitors are counted under: the PUBLISHED one only, never this browser's draft, so an
+  // unfinished edit in the admin cannot send visits to the wrong property. Empty means analytics is off.
+  function analyticsId() {
+    try {
+      var id = String(complete(window.SITE_DEFAULTS).analytics.measurementId || '').trim().toUpperCase();
+      return GA_ID.test(id) ? id : '';
+    } catch (err) {
+      return '';
+    }
+  }
+
   function readDraft() {
     try {
       var raw = localStorage.getItem(DRAFT_KEY);
@@ -65,9 +99,12 @@
 
   window.SiteContent = {
     DRAFT_KEY: DRAFT_KEY,
-    defaults: function () { return clone(window.SITE_DEFAULTS); },
+    GA_ID: GA_ID,
+    defaults: function () { return complete(window.SITE_DEFAULTS); },
     // Published content with this browser's draft (if any) applied on top.
-    load: function () { return merge(window.SITE_DEFAULTS, readDraft()); },
+    load: function () { return merge(complete(window.SITE_DEFAULTS), readDraft()); },
+    complete: complete,
+    analyticsId: analyticsId,
     merge: merge,
     clone: clone,
     safeUrl: safeUrl,
